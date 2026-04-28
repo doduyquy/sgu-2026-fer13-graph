@@ -1,4 +1,4 @@
-"""Clean full-graph trainer for D5A."""
+"""Clean full-graph trainer for D5A with profiling and AMP support."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def set_seed(seed: int) -> None:
 
 def move_to_device(value, device: torch.device):
     if torch.is_tensor(value):
-        return value.to(device)
+        return value.to(device, non_blocking=True)
     if isinstance(value, dict):
         return {k: move_to_device(v, device) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -38,6 +38,24 @@ def _to_float(value) -> float:
     if torch.is_tensor(value):
         return float(value.detach().cpu().item())
     return float(value)
+
+
+def _sync(device: torch.device) -> None:
+    """Synchronize CUDA device if applicable for accurate timing."""
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def _cuda_mem_stats(device: torch.device) -> Dict[str, float]:
+    """Return current CUDA memory stats in GiB (zeros on CPU)."""
+    if device.type != "cuda":
+        return {"cuda_allocated_gb": 0.0, "cuda_reserved_gb": 0.0, "cuda_max_allocated_gb": 0.0}
+    gib = 1024 ** 3
+    return {
+        "cuda_allocated_gb": torch.cuda.memory_allocated(device) / gib,
+        "cuda_reserved_gb": torch.cuda.memory_reserved(device) / gib,
+        "cuda_max_allocated_gb": torch.cuda.max_memory_allocated(device) / gib,
+    }
 
 
 class D5Trainer:
@@ -54,6 +72,8 @@ class D5Trainer:
         config: Optional[Dict[str, Any]] = None,
         use_wandb: bool = False,
         grad_clip_norm: Optional[float] = 5.0,
+        amp: bool = False,
+        profile_batches: int = 0,
     ) -> None:
         self.model = model.to(device)
         self.criterion = criterion.to(device)
@@ -72,27 +92,143 @@ class D5Trainer:
         self.wandb = None
         if self.use_wandb:
             import wandb
-
             self.wandb = wandb
+
+        # AMP setup
+        self.amp_enabled = bool(amp) and self.device.type == "cuda"
+        if bool(amp) and self.device.type != "cuda":
+            print("[AMP] WARNING: AMP requested but device is not CUDA – AMP disabled.")
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.amp_enabled)
+        print(f"[AMP] amp_enabled={self.amp_enabled}")
+
+        # Profiling
+        self.profile_batches = int(profile_batches)
+
         first_param = next(self.model.parameters())
         print(f"trainer device: {self.device}")
         print(f"model first parameter device: {first_param.device}")
 
-    def train_one_epoch(self, loader, epoch: int, max_batches: Optional[int] = None) -> Dict[str, float]:
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _autocast(self):
+        """Return the appropriate autocast context manager."""
+        try:
+            # torch >= 1.10 supports torch.amp.autocast
+            return torch.amp.autocast(device_type=self.device.type, enabled=self.amp_enabled)
+        except AttributeError:
+            return torch.cuda.amp.autocast(enabled=self.amp_enabled)
+
+    def _print_profile(self, batch_idx: int, times: Dict[str, float], mem: Dict[str, float]) -> None:
+        print(
+            f"[PROFILE batch={batch_idx}]\n"
+            f"  data_time      ={times.get('data', 0.0):.4f}s\n"
+            f"  to_device_time ={times.get('to_device', 0.0):.4f}s\n"
+            f"  forward_time   ={times.get('forward', 0.0):.4f}s\n"
+            f"  loss_time      ={times.get('loss', 0.0):.4f}s\n"
+            f"  backward_time  ={times.get('backward', 0.0):.4f}s\n"
+            f"  optimizer_time ={times.get('optimizer', 0.0):.4f}s\n"
+            f"  batch_time     ={times.get('batch', 0.0):.4f}s\n"
+            f"  cuda_allocated_gb    ={mem.get('cuda_allocated_gb', 0.0):.3f}\n"
+            f"  cuda_reserved_gb     ={mem.get('cuda_reserved_gb', 0.0):.3f}\n"
+            f"  cuda_max_allocated_gb={mem.get('cuda_max_allocated_gb', 0.0):.3f}"
+        )
+
+    def _print_profile_avg(
+        self,
+        n: int,
+        acc: Dict[str, float],
+        total_train_batches: Optional[int] = None,
+    ) -> None:
+        avg = {k: v / max(n, 1) for k, v in acc.items()}
+        est_epoch_min: Optional[float] = None
+        if total_train_batches is not None and avg.get("batch", 0.0) > 0:
+            est_epoch_min = avg["batch"] * total_train_batches / 60.0
+        est_str = f"{est_epoch_min:.2f}" if est_epoch_min is not None else "unknown"
+        print(
+            f"\n[PROFILE average first {n} batches]\n"
+            f"  avg_data_time      ={avg.get('data', 0.0):.4f}s\n"
+            f"  avg_to_device_time ={avg.get('to_device', 0.0):.4f}s\n"
+            f"  avg_forward_time   ={avg.get('forward', 0.0):.4f}s\n"
+            f"  avg_loss_time      ={avg.get('loss', 0.0):.4f}s\n"
+            f"  avg_backward_time  ={avg.get('backward', 0.0):.4f}s\n"
+            f"  avg_optimizer_time ={avg.get('optimizer', 0.0):.4f}s\n"
+            f"  avg_batch_time     ={avg.get('batch', 0.0):.4f}s\n"
+            f"  estimated_full_epoch_minutes={est_str}"
+        )
+
+    # ------------------------------------------------------------------
+    # Training epoch
+    # ------------------------------------------------------------------
+
+    def train_one_epoch(
+        self,
+        loader,
+        epoch: int,
+        max_batches: Optional[int] = None,
+        total_train_batches: Optional[int] = None,
+    ) -> Dict[str, float]:
         self.model.train()
         totals: Dict[str, float] = {}
         count = 0
         pred_count = torch.zeros(7, dtype=torch.long)
-        start_time = time.perf_counter()
+        epoch_start = time.perf_counter()
         progress = tqdm(loader, desc=f"train {epoch}", leave=False)
+
+        # Profiling accumulators
+        profile_n = self.profile_batches
+        profile_acc: Dict[str, float] = {k: 0.0 for k in ("data", "to_device", "forward", "loss", "backward", "optimizer", "batch")}
+
+        # Data timer starts right before the first batch is fetched
+        t_data_start = time.perf_counter()
+
         for batch_idx, batch in enumerate(progress):
             if max_batches is not None and batch_idx >= int(max_batches):
                 break
+
+            do_profile = profile_n > 0 and batch_idx < profile_n
+
+            # ---- data_time ----
+            if do_profile:
+                _sync(self.device)
+                t_data_end = time.perf_counter()
+                t_batch_start = t_data_end
+                data_time = t_data_end - t_data_start
+
+            # ---- to_device_time ----
+            if do_profile:
+                _sync(self.device)
+                t0 = time.perf_counter()
             batch = move_to_device(batch, self.device)
+            if do_profile:
+                _sync(self.device)
+                to_device_time = time.perf_counter() - t0
+
             self.optimizer.zero_grad(set_to_none=True)
-            out = self.model(batch)
-            loss_dict = self.criterion(out, batch["y"], batch)
+
+            # ---- forward_time ----
+            if do_profile:
+                _sync(self.device)
+                t0 = time.perf_counter()
+            with self._autocast():
+                out = self.model(batch)
+            if do_profile:
+                _sync(self.device)
+                forward_time = time.perf_counter() - t0
+
+            # ---- loss_time ----
+            if do_profile:
+                _sync(self.device)
+                t0 = time.perf_counter()
+            with self._autocast():
+                loss_dict = self.criterion(out, batch["y"], batch)
             loss = loss_dict["loss"]
+            if do_profile:
+                _sync(self.device)
+                loss_time = time.perf_counter() - t0
+
+            # Device log (first batch only)
             if not self._logged_train_device:
                 print(
                     "train tensor devices: "
@@ -101,17 +237,58 @@ class D5Trainer:
                     f"logits={out['logits'].device} loss={loss.device}"
                 )
                 self._logged_train_device = True
+
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Non-finite training loss at batch {batch_idx}")
-            loss.backward()
+
+            # ---- backward_time ----
+            if do_profile:
+                _sync(self.device)
+                t0 = time.perf_counter()
+            self.scaler.scale(loss).backward()
+            if do_profile:
+                _sync(self.device)
+                backward_time = time.perf_counter() - t0
+
+            # ---- optimizer_time ----
+            if do_profile:
+                _sync(self.device)
+                t0 = time.perf_counter()
+            self.scaler.unscale_(self.optimizer)
             if self.grad_clip_norm is not None:
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip_norm))
             else:
                 grad_norm = self._compute_grad_norm()
+
             grad_norm_finite = bool(torch.isfinite(torch.as_tensor(grad_norm)).detach().cpu().item())
             if not grad_norm_finite:
                 raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
-            self.optimizer.step()
+
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            if do_profile:
+                _sync(self.device)
+                optimizer_time = time.perf_counter() - t0
+
+            # ---- profiling record ----
+            if do_profile:
+                _sync(self.device)
+                batch_time = time.perf_counter() - t_batch_start
+                mem = _cuda_mem_stats(self.device)
+                times = {
+                    "data": data_time,
+                    "to_device": to_device_time,
+                    "forward": forward_time,
+                    "loss": loss_time,
+                    "backward": backward_time,
+                    "optimizer": optimizer_time,
+                    "batch": batch_time,
+                }
+                self._print_profile(batch_idx, times, mem)
+                for k, v in times.items():
+                    profile_acc[k] += v
+                if batch_idx == profile_n - 1:
+                    self._print_profile_avg(profile_n, profile_acc, total_train_batches)
 
             pred = out["logits"].detach().argmax(dim=1).cpu()
             pred_count += torch.bincount(pred, minlength=7)
@@ -122,9 +299,12 @@ class D5Trainer:
             count += 1
             progress.set_postfix(loss=f"{_to_float(loss):.4f}")
 
+            # Reset data timer for next batch
+            t_data_start = time.perf_counter()
+
         metrics = {f"train_{k}": v / max(count, 1) for k, v in totals.items()}
         metrics["train_batches"] = float(count)
-        elapsed = time.perf_counter() - start_time
+        elapsed = time.perf_counter() - epoch_start
         metrics["train_seconds"] = float(elapsed)
         metrics["train_sec_per_batch"] = float(elapsed / max(count, 1))
         for i, c in enumerate(pred_count.tolist()):
@@ -144,8 +324,9 @@ class D5Trainer:
             if max_batches is not None and batch_idx >= int(max_batches):
                 break
             batch = move_to_device(batch, self.device)
-            out = self.model(batch)
-            loss_dict = self.criterion(out, batch["y"], batch)
+            with self._autocast():
+                out = self.model(batch)
+                loss_dict = self.criterion(out, batch["y"], batch)
             logits = out["logits"]
             if not torch.isfinite(logits).all():
                 raise FloatingPointError(f"Non-finite logits during {prefix} at batch {batch_idx}")
@@ -183,10 +364,25 @@ class D5Trainer:
         max_train_batches: Optional[int] = None,
         max_val_batches: Optional[int] = None,
     ) -> Dict[str, Any]:
+        import math
+        dataset_size = getattr(train_loader.dataset, "__len__", lambda: None)()
+        batch_size = getattr(train_loader, "batch_size", None)
+        if dataset_size is not None and batch_size is not None and batch_size > 0:
+            total_train_batches = math.ceil(dataset_size / batch_size)
+            if max_train_batches is not None:
+                total_train_batches = min(total_train_batches, int(max_train_batches))
+        else:
+            total_train_batches = None
+
         stale_epochs = 0
         history = []
         for epoch in range(1, int(epochs) + 1):
-            train_metrics = self.train_one_epoch(train_loader, epoch, max_train_batches)
+            train_metrics = self.train_one_epoch(
+                train_loader,
+                epoch,
+                max_batches=max_train_batches,
+                total_train_batches=total_train_batches,
+            )
             val_metrics = self.validate(val_loader, max_val_batches, prefix="val")
             metrics = {"epoch": float(epoch), **train_metrics, **val_metrics}
             monitor_value = float(metrics.get(monitor, val_metrics.get("val_macro_f1", 0.0)))
@@ -205,7 +401,8 @@ class D5Trainer:
             print(
                 f"epoch={epoch:03d} train_loss={metrics.get('train_loss', 0.0):.4f} "
                 f"val_macro_f1={metrics.get('val_macro_f1', 0.0):.4f} "
-                f"best={self.best_metric:.4f}"
+                f"best={self.best_metric:.4f} "
+                f"train_sec/batch={metrics.get('train_sec_per_batch', 0.0):.3f}s"
             )
             if stale_epochs >= int(early_stopping_patience):
                 print(f"Early stopping after {stale_epochs} stale epochs")

@@ -155,6 +155,23 @@ def main() -> None:
     parser.add_argument("--max_test_batches", type=int, default=None)
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--zip_outputs", action="store_true", default=None)
+    # --- Performance profiling & optimisation ---
+    parser.add_argument("--profile_batches", type=int, default=None,
+                        help="Profile the first N training batches with detailed timings.")
+    parser.add_argument("--num_workers", type=int, default=None,
+                        help="DataLoader num_workers (0=main process).")
+    parser.add_argument("--pin_memory", default=None,
+                        help="DataLoader pin_memory (true/false).")
+    parser.add_argument("--persistent_workers", default=None,
+                        help="DataLoader persistent_workers (true/false, requires num_workers>0).")
+    parser.add_argument("--prefetch_factor", type=int, default=None,
+                        help="DataLoader prefetch_factor (requires num_workers>0).")
+    parser.add_argument("--graph_cache_chunks", type=int, default=None,
+                        help="Number of graph cache chunks to keep in memory.")
+    parser.add_argument("--amp", action="store_true", default=False,
+                        help="Enable Automatic Mixed Precision (AMP) training.")
+    parser.add_argument("--no_amp", action="store_true", default=False,
+                        help="Disable AMP even if set in config.")
     args = parser.parse_args()
 
     config = apply_cli_overrides(load_config(args.config, environment=args.environment), args)

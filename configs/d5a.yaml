@@ -61,3 +61,6 @@ training:
   max_train_batches: null
   max_val_batches: null
   max_test_batches: null
+  # --- Performance ---
+  amp: false            # set true to enable AMP on CUDA
+  profile_batches: 0   # set > 0 to profile first N batches

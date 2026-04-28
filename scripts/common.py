@@ -184,6 +184,36 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
     if getattr(args, "no_wandb", False):
         logging_cfg["use_wandb"] = False
 
+    # --- DataLoader overrides ---
+    if getattr(args, "num_workers", None) is not None:
+        data["num_workers"] = int(args.num_workers)
+    # pin_memory: CLI passes string "true"/"false" or bool
+    _pin = getattr(args, "pin_memory", None)
+    if _pin is not None:
+        if isinstance(_pin, str):
+            data["pin_memory"] = _pin.strip().lower() in ("1", "true", "yes")
+        else:
+            data["pin_memory"] = bool(_pin)
+    _pw = getattr(args, "persistent_workers", None)
+    if _pw is not None:
+        if isinstance(_pw, str):
+            data["persistent_workers"] = _pw.strip().lower() in ("1", "true", "yes")
+        else:
+            data["persistent_workers"] = bool(_pw)
+    if getattr(args, "prefetch_factor", None) is not None:
+        data["prefetch_factor"] = int(args.prefetch_factor)
+    if getattr(args, "graph_cache_chunks", None) is not None:
+        data["graph_cache_chunks"] = int(args.graph_cache_chunks)
+
+    # --- Training performance overrides ---
+    if getattr(args, "profile_batches", None) is not None:
+        training["profile_batches"] = int(args.profile_batches)
+    # AMP: --amp sets True, --no_amp sets False
+    if getattr(args, "amp", False):
+        training["amp"] = True
+    if getattr(args, "no_amp", False):
+        training["amp"] = False
+
     cfg["paths"] = paths
     cfg["data"] = data
     cfg["training"] = training
@@ -204,14 +234,30 @@ def build_dataloader(
         split=split,
         graph_cache_chunks=int(data_cfg.get("graph_cache_chunks", 1)),
     )
-    return DataLoader(
-        dataset,
+    num_workers = int(data_cfg.get("num_workers", 0))
+    pin_memory = bool(data_cfg.get("pin_memory", True))
+    persistent_workers_cfg = bool(data_cfg.get("persistent_workers", False))
+    persistent_workers = persistent_workers_cfg and num_workers > 0
+    if persistent_workers_cfg and num_workers == 0:
+        print("[DataLoader] WARNING: persistent_workers=True ignored because num_workers=0")
+    prefetch_factor_cfg = data_cfg.get("prefetch_factor", None)
+    prefetch_factor = int(prefetch_factor_cfg) if (prefetch_factor_cfg is not None and num_workers > 0) else None
+    loader_kwargs: Dict[str, Any] = dict(
         batch_size=int(data_cfg.get("batch_size", 16)),
         shuffle=bool(shuffle),
-        num_workers=int(data_cfg.get("num_workers", 0)),
-        pin_memory=bool(data_cfg.get("pin_memory", True)),
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
         collate_fn=collate_fn_full_graph,
     )
+    if prefetch_factor is not None:
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+    print(
+        f"[DataLoader split={split}] batch_size={loader_kwargs['batch_size']} "
+        f"num_workers={num_workers} pin_memory={pin_memory} "
+        f"persistent_workers={persistent_workers} prefetch_factor={prefetch_factor}"
+    )
+    return DataLoader(dataset, **loader_kwargs)
 
 
 def resolve_device(device_arg: str | None = None, config: Optional[Dict[str, Any]] = None) -> torch.device:
@@ -274,6 +320,7 @@ def create_trainer(config: Dict[str, Any]) -> D5Trainer:
     model, criterion, optimizer, scheduler, device = prepare_training_objects(config)
     paths = config.get("paths", {})
     logging_cfg = config.get("logging", {})
+    training_cfg = config.get("training", {})
     output_root = resolve_path(paths.get("output_root", "outputs"))
     save_config(config, output_root)
     return D5Trainer(
@@ -285,7 +332,9 @@ def create_trainer(config: Dict[str, Any]) -> D5Trainer:
         output_root=output_root,
         config=config,
         use_wandb=bool(logging_cfg.get("use_wandb", False)),
-        grad_clip_norm=config.get("training", {}).get("grad_clip_norm", 5.0),
+        grad_clip_norm=training_cfg.get("grad_clip_norm", 5.0),
+        amp=bool(training_cfg.get("amp", False)),
+        profile_batches=int(training_cfg.get("profile_batches", 0)),
     )
 
 
