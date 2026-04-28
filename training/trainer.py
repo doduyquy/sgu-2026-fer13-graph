@@ -91,13 +91,18 @@ class D5Trainer:
                 raise FloatingPointError(f"Non-finite training loss at batch {batch_idx}")
             loss.backward()
             if self.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip_norm))
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip_norm))
+            else:
+                grad_norm = self._compute_grad_norm()
+            if not torch.isfinite(torch.as_tensor(grad_norm)):
+                raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
             self.optimizer.step()
 
             pred = out["logits"].detach().argmax(dim=1).cpu()
             pred_count += torch.bincount(pred, minlength=7)
             for key, value in loss_dict.items():
                 totals[key] = totals.get(key, 0.0) + _to_float(value)
+            totals["grad_norm"] = totals.get("grad_norm", 0.0) + _to_float(grad_norm)
             self._add_diagnostics(totals, out.get("diagnostics", {}))
             count += 1
             progress.set_postfix(loss=f"{_to_float(loss):.4f}")
@@ -215,3 +220,13 @@ class D5Trainer:
         for key, value in diagnostics.items():
             if torch.is_tensor(value) and value.numel() == 1:
                 totals[f"diag_{key}"] = totals.get(f"diag_{key}", 0.0) + _to_float(value)
+
+    def _compute_grad_norm(self) -> torch.Tensor:
+        norms = [
+            p.grad.detach().norm(2)
+            for p in self.model.parameters()
+            if p.grad is not None
+        ]
+        if not norms:
+            return torch.zeros((), device=self.device)
+        return torch.norm(torch.stack(norms), p=2)
