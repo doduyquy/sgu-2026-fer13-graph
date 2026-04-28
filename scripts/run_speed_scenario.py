@@ -62,48 +62,132 @@ def deep_merge(dict1, dict2):
     return dict1
 
 
+def _find_actual_repo_root(base: Path) -> Path | None:
+    """Search for the actual graph repo root under `base`.
+
+    Kaggle datasets are sometimes mounted with an extra nesting level, e.g.:
+      /kaggle/input/graph-repo/graph-repo/train/chunk_000.pt
+
+    We look for:
+      1. manifest.pt directly in `base`
+      2. manifest.pt one level below
+      3. train/chunk_*.pt directly in `base`
+      4. train/chunk_*.pt one level below
+    Returns the best candidate or None.
+    """
+    # Level 0: base itself
+    if (base / "manifest.pt").exists():
+        return base
+    chunks_at_base = list((base / "train").glob("chunk_*.pt")) if (base / "train").exists() else []
+    if chunks_at_base:
+        return base
+
+    # Level 1: immediate subdirectories
+    best = None
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "manifest.pt").exists():
+            return child   # manifest is the strongest signal
+        if (child / "train").exists() and list((child / "train").glob("chunk_*.pt")):
+            best = child   # chunks without manifest – keep looking for manifest
+    return best
+
+
+def _print_repo_tree(base: Path, max_depth: int = 2) -> None:
+    """Print a compact directory tree for diagnostics."""
+    def _walk(path: Path, depth: int, prefix: str) -> None:
+        if depth > max_depth:
+            return
+        try:
+            children = sorted(path.iterdir())
+        except PermissionError:
+            return
+        for i, child in enumerate(children[:20]):   # cap at 20 entries per dir
+            connector = "└── " if i == len(children) - 1 else "├── "
+            extra = f"  ({child.stat().st_size} B)" if child.is_file() else "/"
+            print(f"  {prefix}{connector}{child.name}{extra}")
+            if child.is_dir():
+                extension = "    " if i == len(children) - 1 else "│   "
+                _walk(child, depth + 1, prefix + extension)
+        if len(children) > 20:
+            print(f"  {prefix}  ... ({len(children) - 20} more)")
+
+    print(f"[REPO_TREE] {base}")
+    _walk(base, 0, "")
+
+
 def inspect_graph_repo(config: dict) -> dict:
     """Inspect the graph repository and print diagnostic [SPEED_BENCH] tags.
 
+    Auto-detects the actual repo root if the given path has extra nesting
+    (common on Kaggle where datasets are mounted with an extra subdirectory).
+
     Returns a dict with keys:
-        graph_repo_path, train_samples, val_samples, test_samples,
-        is_tiny_repo (bool).
+        graph_repo_path         – resolved (possibly corrected) path
+        graph_repo_path_orig    – path from config (before correction)
+        train_samples, val_samples, test_samples
+        is_tiny_repo (bool)
     """
     from common import resolve_path
     paths = config.get("paths", {})
     repo_raw = paths.get("graph_repo_path", "artifacts/graph_repo")
     repo = resolve_path(repo_raw)
 
-    info = {
+    info: dict = {
         "graph_repo_path": str(repo) if repo else str(repo_raw),
+        "graph_repo_path_orig": str(repo_raw),
         "train_samples": None,
         "val_samples": None,
         "test_samples": None,
         "is_tiny_repo": False,
     }
 
-    print(f"[SPEED_BENCH] graph_repo_path={info['graph_repo_path']}")
+    print(f"[SPEED_BENCH] graph_repo_path_orig={repo_raw}")
 
     if repo is None or not repo.exists():
         print(f"[SPEED_BENCH] graph_repo_missing=True  path={info['graph_repo_path']}")
-        info["is_tiny_repo"] = True   # treat missing as tiny
+        info["is_tiny_repo"] = True
         return info
 
-    # Count samples per split by inspecting the dataset
+    # ---- Auto-detect actual repo root ----
+    actual_root = _find_actual_repo_root(repo)
+    if actual_root is None:
+        print(
+            f"[SPEED_BENCH] graph_repo_no_chunks=True  "
+            f"(no manifest.pt or train/chunk_*.pt found under {repo})"
+        )
+        print("[REPO] Directory structure:")
+        _print_repo_tree(repo)
+        info["is_tiny_repo"] = True
+        return info
+
+    if actual_root != repo:
+        print(
+            f"[SPEED_BENCH] graph_repo_corrected=True  "
+            f"orig={repo}  actual={actual_root}"
+        )
+        # Update config so the trainer also uses the corrected path
+        config.setdefault("paths", {})["graph_repo_path"] = str(actual_root)
+    info["graph_repo_path"] = str(actual_root)
+    print(f"[SPEED_BENCH] graph_repo_path={actual_root}")
+
+    # ---- Count samples via GraphRepositoryReader (no chunk loading) ----
     try:
-        from data.full_graph_dataset import FullGraphDataset
-        data_cfg = config.get("data", {})
-        chunks = int(data_cfg.get("graph_cache_chunks", 1))
+        from data.graph_repository import GraphRepositoryReader
+        reader = GraphRepositoryReader(actual_root)
 
         for split in ("train", "val", "test"):
             try:
-                ds = FullGraphDataset(repo_root=repo, split=split,
-                                      graph_cache_chunks=chunks)
-                count = len(ds)
+                count = reader.split_size(split)
                 info[f"{split}_samples"] = count
                 print(f"[SPEED_BENCH] {split}_samples={count}")
             except Exception as exc:
                 print(f"[SPEED_BENCH] {split}_samples=ERROR  ({exc})")
+                # Try raw chunk glob as last resort
+                chunk_pts = list((actual_root / split).glob("chunk_*.pt")) if (actual_root / split).exists() else []
+                if chunk_pts:
+                    print(f"[SPEED_BENCH]   {split}: found {len(chunk_pts)} chunk files (need to load to count)")
 
     except Exception as exc:
         print(f"[SPEED_BENCH] repo_inspect_error={exc}")
@@ -115,8 +199,11 @@ def inspect_graph_repo(config: dict) -> dict:
             f"[SPEED_BENCH] tiny_repo=True  "
             f"train_samples={train_n} < threshold={TINY_REPO_THRESHOLD}"
         )
+        # Print tree to help diagnose
+        print("[REPO] Directory structure:")
+        _print_repo_tree(actual_root)
     else:
-        print(f"[SPEED_BENCH] tiny_repo=False")
+        print(f"[SPEED_BENCH] tiny_repo=False  train_samples={train_n}")
 
     return info
 
