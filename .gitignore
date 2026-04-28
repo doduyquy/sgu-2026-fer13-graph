@@ -7,6 +7,8 @@ dataset
 # Outputs
 *.pth
 *.pt
+artifacts/
+outputs/
 
 # WandB
 wandb/
@@ -17,7 +19,12 @@ __pycache__/
 # IDE
 .vscode/
 
-
+/eda/
 
 # Q, misc
 zmisc
+
+
+#data quá lớn không pub
+dataset/
+.zip
