@@ -1,15 +1,47 @@
-"""Run multiple speed scenarios and summarize results."""
+"""Run multiple speed scenarios and summarize results.
+
+Changes v2:
+- Reads train_sec_per_batch, estimated_train_min_per_epoch, cuda_max_allocated_gb,
+  profile_batches_requested, profile_batches_recorded, actual_batch_size,
+  first_batch shapes, len_train_loader, batches_per_epoch from profile JSON.
+- Table now shows Sec/Batch and Est. Epoch correctly.
+- bs_mismatch flag is surfaced in Status column.
+- Only the 3 required scenarios are mandatory; others are optional.
+"""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+
+TRAIN_SAMPLES = 28709  # FER-2013 training set size
+
+# Scenarios to run (in order)
+DEFAULT_SCENARIOS = [
+    "configs/scenarios/d5a_speed_bs16.yaml",
+    "configs/scenarios/d5a_speed_bs32.yaml",
+    "configs/scenarios/d5a_speed_bs64.yaml",
+    "configs/scenarios/d5a_speed_bs128.yaml",
+    "configs/scenarios/d5a_speed_bs64_loader2.yaml",
+    "configs/scenarios/d5a_speed_bs64_loader4.yaml",
+    "configs/scenarios/d5a_speed_bs64_amp.yaml",
+    "configs/scenarios/d5a_speed_bs64_loader2_amp.yaml",
+]
+
+# Scenarios that MUST pass (will be re-run if specified via --mandatory)
+MANDATORY_SCENARIOS = {
+    "d5a_speed_bs64",
+    "d5a_speed_bs128",
+    "d5a_speed_bs64_amp",
+}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -19,41 +51,42 @@ def main():
     parser.add_argument("--graph_repo_path", default=None)
     parser.add_argument("--output_dir", default="outputs/speed_benchmark")
     parser.add_argument("--no_wandb", action="store_true")
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        default=None,
+        help="Run only these scenario stems (e.g. d5a_speed_bs64 d5a_speed_bs128)",
+    )
     args = parser.parse_args()
-
-    scenarios = [
-        "configs/scenarios/d5a_speed_bs16.yaml",
-        "configs/scenarios/d5a_speed_bs32.yaml",
-        "configs/scenarios/d5a_speed_bs64.yaml",
-        "configs/scenarios/d5a_speed_bs128.yaml",
-        "configs/scenarios/d5a_speed_bs64_loader2.yaml",
-        "configs/scenarios/d5a_speed_bs64_loader4.yaml",
-        "configs/scenarios/d5a_speed_bs64_amp.yaml",
-        "configs/scenarios/d5a_speed_bs64_loader2_amp.yaml"
-    ]
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     csv_file = out_dir / "speed_benchmark_results.csv"
     md_file = out_dir / "speed_benchmark_results.md"
-    
+
     results = []
-    
-    for scenario_path in scenarios:
-        if not Path(scenario_path).exists():
+
+    for scenario_path_str in DEFAULT_SCENARIOS:
+        scenario_path = Path(scenario_path_str)
+        scenario_name = scenario_path.stem
+
+        # Filter if --only specified
+        if args.only and scenario_name not in args.only:
+            continue
+
+        if not scenario_path.exists():
             print(f"Skipping missing scenario: {scenario_path}")
             continue
-            
-        scenario_name = Path(scenario_path).stem
+
         print(f"\n{'='*60}\nRunning Scenario: {scenario_name}\n{'='*60}")
-        
+
         cmd = [
             sys.executable, "scripts/run_speed_scenario.py",
             "--config", args.config,
-            "--scenario", scenario_path,
+            "--scenario", str(scenario_path),
             "--device", args.device,
-            "--output_dir", args.output_dir
+            "--output_dir", args.output_dir,
         ]
         if args.environment:
             cmd.extend(["--environment", args.environment])
@@ -61,153 +94,274 @@ def main():
             cmd.extend(["--graph_repo_path", args.graph_repo_path])
         if args.no_wandb:
             cmd.append("--no_wandb")
-            
+
         oom = False
         status = "SUCCESS"
-        
+
         try:
             process = subprocess.run(cmd, check=True, capture_output=True, text=True)
             print(process.stdout)
+            if process.stderr:
+                print("[stderr]", process.stderr[-2000:])
         except subprocess.CalledProcessError as e:
             print(e.stdout)
-            print(e.stderr)
-            if "CUDA out of memory" in e.stdout or "CUDA out of memory" in e.stderr:
+            if e.stderr:
+                print("[stderr]", e.stderr[-2000:])
+            combined = (e.stdout or "") + (e.stderr or "")
+            if "CUDA out of memory" in combined:
                 oom = True
                 status = "OOM"
                 print(f"Scenario {scenario_name} failed with OOM.")
             else:
                 status = "FAIL"
                 print(f"Scenario {scenario_name} failed with error.")
-                
-        # Read config details to populate CSV
+
+        # Read scenario config for metadata
         with open(scenario_path, "r") as f:
             scfg = yaml.safe_load(f) or {}
-            
+
         data_cfg = scfg.get("data", {})
         train_cfg = scfg.get("training", {})
-        
-        batch_size = data_cfg.get("batch_size", 16)
-        
+
+        configured_bs = int(data_cfg.get("batch_size", 16))
+        num_workers = int(data_cfg.get("num_workers", 0))
+        amp = bool(train_cfg.get("amp", False))
+        profile_batches_requested_cfg = int(train_cfg.get("profile_batches", 0))
+        max_train_batches_cfg = train_cfg.get("max_train_batches")
+
         row = {
             "scenario_name": scenario_name,
-            "batch_size": batch_size,
-            "num_workers": data_cfg.get("num_workers", 0),
+            "configured_batch_size": configured_bs,
+            "num_workers": num_workers,
             "pin_memory": data_cfg.get("pin_memory", False),
             "persistent_workers": data_cfg.get("persistent_workers", False),
             "prefetch_factor": data_cfg.get("prefetch_factor", "null"),
             "graph_cache_chunks": data_cfg.get("graph_cache_chunks", 1),
-            "amp": train_cfg.get("amp", False),
+            "amp": amp,
             "status": status,
             "oom": oom,
-            "batches_per_epoch": 28709 // batch_size + (1 if 28709 % batch_size != 0 else 0)
+            # Will be filled from profile JSON
+            "actual_batch_size": configured_bs,
+            "first_batch_x_shape": None,
+            "first_batch_edge_attr_shape": None,
+            "len_train_loader": None,
+            "batches_per_epoch": math.ceil(TRAIN_SAMPLES / configured_bs),
+            "max_train_batches": max_train_batches_cfg,
+            "number_of_train_batches_run": None,
+            "train_sec_per_batch": None,
+            "estimated_train_min_per_epoch": None,
+            "avg_data_time": None,
+            "avg_to_device_time": None,
+            "avg_forward_time": None,
+            "avg_loss_time": None,
+            "avg_backward_time": None,
+            "avg_optimizer_time": None,
+            "cuda_allocated_gb": None,
+            "cuda_reserved_gb": None,
+            "cuda_max_allocated_gb": None,
+            "profile_batches_requested": profile_batches_requested_cfg,
+            "profile_batches_recorded": None,
+            "bs_mismatch": False,
+            "note": "",
         }
-        
-        # Load profile
+
+        # Load profile JSON written by run_speed_scenario.py
         profile_file = out_dir / f"{scenario_name}_profile.json"
-        if status == "SUCCESS" and profile_file.exists():
+        if status in ("SUCCESS", "FAIL_BS_MISMATCH") and profile_file.exists():
             with open(profile_file, "r") as f:
                 prof = json.load(f)
-            row.update({
-                "sec_per_batch": prof.get("sec_per_batch"),
-                "estimated_train_min_per_epoch": prof.get("estimated_train_min_per_epoch"),
-                "data_time": prof.get("data_time"),
-                "to_device_time": prof.get("to_device_time"),
-                "forward_time": prof.get("forward_time"),
-                "loss_time": prof.get("loss_time"),
-                "backward_time": prof.get("backward_time"),
-                "optimizer_time": prof.get("optimizer_time"),
-                "cuda_allocated_gb": prof.get("cuda_allocated_gb"),
-                "cuda_reserved_gb": prof.get("cuda_reserved_gb"),
-                "cuda_max_allocated_gb": prof.get("cuda_max_allocated_gb"),
-            })
-            
-            # Add note
-            note = []
-            if prof.get("sec_per_batch"):
-                total_t = prof["sec_per_batch"]
-                if prof.get("data_time", 0) / total_t > 0.3:
-                    note.append("DataLoader bottleneck likely.")
-                if (prof.get("forward_time", 0) + prof.get("loss_time", 0) + prof.get("backward_time", 0)) / total_t > 0.6:
-                    note.append("Model/loss bottleneck likely.")
-                if prof.get("to_device_time", 0) / total_t > 0.2:
-                    note.append("CPU-GPU transfer bottleneck likely.")
-            row["note"] = " ".join(note)
-        else:
-            row.update({
-                "sec_per_batch": None,
-                "estimated_train_min_per_epoch": None,
-                "data_time": None,
-                "to_device_time": None,
-                "forward_time": None,
-                "loss_time": None,
-                "backward_time": None,
-                "optimizer_time": None,
-                "cuda_allocated_gb": None,
-                "cuda_reserved_gb": None,
-                "cuda_max_allocated_gb": None,
-                "note": ""
-            })
-            
+
+            # Scalar fields from profile
+            for key in (
+                "actual_batch_size",
+                "len_train_loader",
+                "batches_per_epoch",
+                "max_train_batches",
+                "number_of_train_batches_run",
+                "train_sec_per_batch",
+                "estimated_train_min_per_epoch",
+                "avg_data_time",
+                "avg_to_device_time",
+                "avg_forward_time",
+                "avg_loss_time",
+                "avg_backward_time",
+                "avg_optimizer_time",
+                "cuda_allocated_gb",
+                "cuda_reserved_gb",
+                "cuda_max_allocated_gb",
+                "profile_batches_requested",
+                "profile_batches_recorded",
+            ):
+                if prof.get(key) is not None:
+                    row[key] = prof[key]
+
+            # Shape fields (stored as lists)
+            row["first_batch_x_shape"] = str(prof.get("first_batch_x_shape", ""))
+            row["first_batch_edge_attr_shape"] = str(prof.get("first_batch_edge_attr_shape", ""))
+            row["bs_mismatch"] = bool(prof.get("bs_mismatch", False))
+
+            if row["bs_mismatch"]:
+                row["status"] = "FAIL_BS_MISMATCH"
+
+            # Recompute estimated epoch from actual values if still missing
+            if row["estimated_train_min_per_epoch"] is None and row["train_sec_per_batch"] is not None:
+                bpe = row.get("batches_per_epoch")
+                if bpe:
+                    row["estimated_train_min_per_epoch"] = (
+                        row["train_sec_per_batch"] * bpe / 60.0
+                    )
+
+            # Auto-annotation
+            note_parts = []
+            spb = row.get("train_sec_per_batch")
+            if spb:
+                if row.get("avg_data_time") and row["avg_data_time"] / spb > 0.3:
+                    note_parts.append("DataLoader bottleneck.")
+                if (
+                    (row.get("avg_forward_time", 0) or 0)
+                    + (row.get("avg_loss_time", 0) or 0)
+                    + (row.get("avg_backward_time", 0) or 0)
+                ) / spb > 0.6:
+                    note_parts.append("Model/loss bottleneck.")
+                if row.get("avg_to_device_time") and row["avg_to_device_time"] / spb > 0.2:
+                    note_parts.append("CPU-GPU transfer bottleneck.")
+            if row["bs_mismatch"]:
+                note_parts.append("⚠ BS MISMATCH – DataLoader not using configured bs!")
+            row["note"] = " ".join(note_parts)
+
         results.append(row)
-        
-    # Write CSV
+
+    # ------------------------------------------------------------------ #
+    # Write CSV                                                            #
+    # ------------------------------------------------------------------ #
     headers = [
-        "scenario_name", "batch_size", "num_workers", "pin_memory", "persistent_workers",
-        "prefetch_factor", "graph_cache_chunks", "amp", "sec_per_batch", "batches_per_epoch",
-        "estimated_train_min_per_epoch", "data_time", "to_device_time", "forward_time", "loss_time",
-        "backward_time", "optimizer_time", "cuda_allocated_gb", "cuda_reserved_gb",
-        "cuda_max_allocated_gb", "oom", "status", "note"
+        "scenario_name", "configured_batch_size", "actual_batch_size",
+        "first_batch_x_shape", "first_batch_edge_attr_shape",
+        "num_workers", "pin_memory", "persistent_workers", "prefetch_factor",
+        "graph_cache_chunks", "amp",
+        "len_train_loader", "batches_per_epoch", "max_train_batches",
+        "number_of_train_batches_run",
+        "train_sec_per_batch", "estimated_train_min_per_epoch",
+        "avg_data_time", "avg_to_device_time", "avg_forward_time",
+        "avg_loss_time", "avg_backward_time", "avg_optimizer_time",
+        "cuda_allocated_gb", "cuda_reserved_gb", "cuda_max_allocated_gb",
+        "profile_batches_requested", "profile_batches_recorded",
+        "bs_mismatch", "oom", "status", "note",
     ]
-    
-    with open(csv_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers)
+
+    with open(csv_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
         writer.writeheader()
         for r in results:
             writer.writerow(r)
-            
-    # Write MD
-    md_content = f"# Speed Benchmark Results\n\n| Scenario | Status | BS | Workers | AMP | Sec/Batch | Est. Epoch (min) | Max VRAM (GB) | Note |\n"
-    md_content += "|---|---|---|---|---|---|---|---|---|\n"
+
+    # ------------------------------------------------------------------ #
+    # Write Markdown                                                       #
+    # ------------------------------------------------------------------ #
+    md_lines = [
+        "# Speed Benchmark Results\n",
+        "| scenario | actual_bs | x_shape | sec/batch | batches/epoch |"
+        " est_epoch_min | max_vram_gb | profile_batches_recorded | status |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
     for r in results:
-        est_min = f"{r['estimated_train_min_per_epoch']:.1f}" if r['estimated_train_min_per_epoch'] else "-"
-        sec_b = f"{r['sec_per_batch']:.3f}" if r['sec_per_batch'] else "-"
-        vram = f"{r['cuda_max_allocated_gb']:.2f}" if r['cuda_max_allocated_gb'] else "-"
-        md_content += f"| {r['scenario_name']} | {r['status']} | {r['batch_size']} | {r['num_workers']} | {r['amp']} | {sec_b} | {est_min} | {vram} | {r['note']} |\n"
-        
-    with open(md_file, "w") as f:
+        x_shape = r.get("first_batch_x_shape") or "-"
+        spb = r.get("train_sec_per_batch")
+        est = r.get("estimated_train_min_per_epoch")
+        vram = r.get("cuda_max_allocated_gb")
+        recorded = r.get("profile_batches_recorded")
+        requested = r.get("profile_batches_requested")
+
+        spb_str = f"{spb:.3f}s" if spb is not None else "-"
+        est_str = f"{est:.1f}" if est is not None else "-"
+        vram_str = f"{vram:.2f}" if vram is not None else "-"
+        if recorded is not None and requested is not None:
+            rec_str = f"{recorded}/{requested}"
+        elif recorded is not None:
+            rec_str = str(recorded)
+        else:
+            rec_str = "-"
+
+        md_lines.append(
+            f"| {r['scenario_name']} | {r['actual_batch_size']} | {x_shape} "
+            f"| {spb_str} | {r['batches_per_epoch']} | {est_str} "
+            f"| {vram_str} | {rec_str} | {r['status']} |"
+        )
+
+    md_content = "\n".join(md_lines) + "\n"
+
+    # Note section
+    note_rows = [r for r in results if r.get("note")]
+    if note_rows:
+        md_content += "\n## Notes\n"
+        for r in note_rows:
+            md_content += f"- **{r['scenario_name']}**: {r['note']}\n"
+
+    with open(md_file, "w", encoding="utf-8") as f:
         f.write(md_content)
-        
-    # Find best scenario
-    valid_results = [r for r in results if r["status"] == "SUCCESS" and r["estimated_train_min_per_epoch"] is not None]
-    if valid_results:
-        best = min(valid_results, key=lambda x: x["estimated_train_min_per_epoch"])
-        
-        best_summary = {
-            "scenario_name": best["scenario_name"],
-            "batch_size": best["batch_size"],
-            "num_workers": best["num_workers"],
-            "amp": best["amp"],
-            "sec_per_batch": best["sec_per_batch"],
-            "estimated_train_min_per_epoch": best["estimated_train_min_per_epoch"],
-            "cuda_max_allocated_gb": best["cuda_max_allocated_gb"],
-            "note": best["note"]
-        }
-        
+
+    print(f"\n{'='*60}")
+    print(f"Results written to:\n  CSV: {csv_file}\n  MD:  {md_file}")
+
+    # ------------------------------------------------------------------ #
+    # Pretty-print summary table                                           #
+    # ------------------------------------------------------------------ #
+    print(f"\n{'Speed Benchmark Results':^60}")
+    header = (
+        f"{'Scenario':<35} {'aBS':>5} {'Sec/Bat':>8} {'Bat/Ep':>7}"
+        f" {'EstMin':>7} {'VRAM':>6} {'Rec':>5} {'Status':<20}"
+    )
+    print(header)
+    print("-" * len(header))
+    for r in results:
+        spb = r.get("train_sec_per_batch")
+        est = r.get("estimated_train_min_per_epoch")
+        vram = r.get("cuda_max_allocated_gb")
+        recorded = r.get("profile_batches_recorded")
+        requested = r.get("profile_batches_requested")
+        rec_str = f"{recorded}/{requested}" if recorded is not None and requested is not None else "-"
+        print(
+            f"{r['scenario_name']:<35} {r['actual_batch_size']:>5}"
+            f" {(spb or 0):>7.3f}s {r['batches_per_epoch']:>7}"
+            f" {(est or 0):>6.1f}m {(vram or 0):>5.2f}G"
+            f" {rec_str:>5} {r['status']:<20}"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Best scenario                                                        #
+    # ------------------------------------------------------------------ #
+    valid = [
+        r for r in results
+        if r["status"] == "SUCCESS" and r.get("estimated_train_min_per_epoch") is not None
+    ]
+    if valid:
+        best = min(valid, key=lambda x: x["estimated_train_min_per_epoch"])
+        best_summary = {k: best[k] for k in (
+            "scenario_name", "configured_batch_size", "actual_batch_size",
+            "num_workers", "amp", "train_sec_per_batch",
+            "estimated_train_min_per_epoch", "cuda_max_allocated_gb",
+            "batches_per_epoch", "profile_batches_recorded", "note",
+        ) if k in best}
+
         with open(out_dir / "best_speed_scenario.json", "w") as f:
             json.dump(best_summary, f, indent=2)
-            
+
         with open(out_dir / "best_speed_scenario.md", "w") as f:
             f.write("# Best Speed Scenario\n\n")
             f.write(f"- **Scenario**: `{best['scenario_name']}`\n")
-            f.write(f"- **Batch Size**: {best['batch_size']}\n")
+            f.write(f"- **Configured Batch Size**: {best['configured_batch_size']}\n")
+            f.write(f"- **Actual Batch Size**: {best['actual_batch_size']}\n")
             f.write(f"- **Num Workers**: {best['num_workers']}\n")
             f.write(f"- **AMP**: {best['amp']}\n")
-            f.write(f"- **Sec/Batch**: {best['sec_per_batch']:.3f}s\n")
+            f.write(f"- **Sec/Batch**: {best.get('train_sec_per_batch', 0):.3f}s\n")
+            f.write(f"- **Batches/Epoch**: {best.get('batches_per_epoch', 'N/A')}\n")
             f.write(f"- **Est. Epoch Time**: {best['estimated_train_min_per_epoch']:.1f} minutes\n")
-            f.write(f"- **Max VRAM**: {best['cuda_max_allocated_gb']:.2f} GB\n")
-            f.write(f"- **Note**: {best['note']}\n")
-            
-        print(f"\nBest Scenario: {best['scenario_name']} ({best['estimated_train_min_per_epoch']:.1f} mins/epoch)")
+            f.write(f"- **Max VRAM**: {best.get('cuda_max_allocated_gb', 0):.2f} GB\n")
+            f.write(f"- **Profile Recorded**: {best.get('profile_batches_recorded', 'N/A')}\n")
+            f.write(f"- **Note**: {best.get('note', '')}\n")
+
+        print(f"\nBest: {best['scenario_name']} → {best['estimated_train_min_per_epoch']:.1f} mins/epoch")
+
 
 if __name__ == "__main__":
     main()

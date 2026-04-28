@@ -137,17 +137,24 @@ class D5Trainer:
 
     def _print_profile_avg(
         self,
-        n: int,
+        requested: int,
+        recorded: int,
         acc: Dict[str, float],
         total_train_batches: Optional[int] = None,
     ) -> None:
-        avg = {k: v / max(n, 1) for k, v in acc.items()}
+        """Print average profile over *recorded* batches.
+
+        requested = profile_batches config value
+        recorded  = actual number of batches we accumulated (may be < requested
+                    if max_train_batches cut training short).
+        """
+        avg = {k: v / max(recorded, 1) for k, v in acc.items()}
         est_epoch_min: Optional[float] = None
         if total_train_batches is not None and avg.get("batch", 0.0) > 0:
             est_epoch_min = avg["batch"] * total_train_batches / 60.0
         est_str = f"{est_epoch_min:.2f}" if est_epoch_min is not None else "unknown"
         print(
-            f"\n[PROFILE average first {n} batches]\n"
+            f"\n[PROFILE average first {requested} batches (recorded={recorded})]\n"
             f"  avg_data_time      ={avg.get('data', 0.0):.4f}s\n"
             f"  avg_to_device_time ={avg.get('to_device', 0.0):.4f}s\n"
             f"  avg_forward_time   ={avg.get('forward', 0.0):.4f}s\n"
@@ -168,6 +175,7 @@ class D5Trainer:
         epoch: int,
         max_batches: Optional[int] = None,
         total_train_batches: Optional[int] = None,
+        full_epoch_batches: Optional[int] = None,
     ) -> Dict[str, float]:
         self.model.train()
         totals: Dict[str, float] = {}
@@ -177,13 +185,19 @@ class D5Trainer:
         progress = tqdm(loader, desc=f"train {epoch}", leave=False)
 
         # Profiling accumulators
-        profile_n = self.profile_batches
-        profile_acc: Dict[str, float] = {k: 0.0 for k in ("data", "to_device", "forward", "loss", "backward", "optimizer", "batch")}
+        profile_n = self.profile_batches          # requested
+        profile_recorded = 0                       # actually accumulated
+        profile_acc: Dict[str, float] = {k: 0.0 for k in (
+            "data", "to_device", "forward", "loss", "backward", "optimizer", "batch"
+        )}
+        profile_avg_printed = False
 
         # Data timer starts right before the first batch is fetched
         t_data_start = time.perf_counter()
 
         for batch_idx, batch in enumerate(progress):
+            is_last = (max_batches is not None and batch_idx + 1 >= int(max_batches))
+
             if max_batches is not None and batch_idx >= int(max_batches):
                 break
 
@@ -256,11 +270,15 @@ class D5Trainer:
                 t0 = time.perf_counter()
             self.scaler.unscale_(self.optimizer)
             if self.grad_clip_norm is not None:
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip_norm))
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), float(self.grad_clip_norm)
+                )
             else:
                 grad_norm = self._compute_grad_norm()
 
-            grad_norm_finite = bool(torch.isfinite(torch.as_tensor(grad_norm)).detach().cpu().item())
+            grad_norm_finite = bool(
+                torch.isfinite(torch.as_tensor(grad_norm)).detach().cpu().item()
+            )
             if not grad_norm_finite:
                 raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
 
@@ -287,8 +305,23 @@ class D5Trainer:
                 self._print_profile(batch_idx, times, mem)
                 for k, v in times.items():
                     profile_acc[k] += v
-                if batch_idx == profile_n - 1:
-                    self._print_profile_avg(profile_n, profile_acc, total_train_batches)
+                profile_recorded += 1
+
+                # Print avg when requested window is full, OR on last batch
+                # (in case max_batches cuts the run before profile_n).
+                window_done = (batch_idx == profile_n - 1)
+                last_profile_batch = is_last and not profile_avg_printed
+                if (window_done or last_profile_batch) and not profile_avg_printed:
+                    # Use full_epoch_batches for accurate epoch estimate;
+                    # fall back to total_train_batches if not provided.
+                    epoch_batches_for_estimate = full_epoch_batches or total_train_batches
+                    self._print_profile_avg(
+                        requested=profile_n,
+                        recorded=profile_recorded,
+                        acc=profile_acc,
+                        total_train_batches=epoch_batches_for_estimate,
+                    )
+                    profile_avg_printed = True
 
             pred = out["logits"].detach().argmax(dim=1).cpu()
             pred_count += torch.bincount(pred, minlength=7)
@@ -301,6 +334,17 @@ class D5Trainer:
 
             # Reset data timer for next batch
             t_data_start = time.perf_counter()
+
+        # If profiling window was never printed (e.g. profile_n=0 or nothing recorded),
+        # print a final avg if we did accumulate something.
+        if profile_recorded > 0 and not profile_avg_printed:
+            epoch_batches_for_estimate = full_epoch_batches or total_train_batches
+            self._print_profile_avg(
+                requested=profile_n,
+                recorded=profile_recorded,
+                acc=profile_acc,
+                total_train_batches=epoch_batches_for_estimate,
+            )
 
         metrics = {f"train_{k}": v / max(count, 1) for k, v in totals.items()}
         metrics["train_batches"] = float(count)
@@ -367,11 +411,17 @@ class D5Trainer:
         import math
         dataset_size = getattr(train_loader.dataset, "__len__", lambda: None)()
         batch_size = getattr(train_loader, "batch_size", None)
+        # full_epoch_batches: used for estimated epoch time (NOT capped by max_train_batches).
+        # total_train_batches: passed to train_one_epoch as the effective batches this run.
         if dataset_size is not None and batch_size is not None and batch_size > 0:
-            total_train_batches = math.ceil(dataset_size / batch_size)
-            if max_train_batches is not None:
-                total_train_batches = min(total_train_batches, int(max_train_batches))
+            full_epoch_batches = math.ceil(dataset_size / batch_size)
+            total_train_batches = (
+                min(full_epoch_batches, int(max_train_batches))
+                if max_train_batches is not None
+                else full_epoch_batches
+            )
         else:
+            full_epoch_batches = None
             total_train_batches = None
 
         stale_epochs = 0
@@ -382,6 +432,7 @@ class D5Trainer:
                 epoch,
                 max_batches=max_train_batches,
                 total_train_batches=total_train_batches,
+                full_epoch_batches=full_epoch_batches,
             )
             val_metrics = self.validate(val_loader, max_val_batches, prefix="val")
             metrics = {"epoch": float(epoch), **train_metrics, **val_metrics}
