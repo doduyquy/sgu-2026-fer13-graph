@@ -9,6 +9,11 @@ Changes v4:
 - bs_mismatch uses expected_first_batch = min(configured_bs, train_samples):
     if x.shape[0] != expected_first_batch → FAIL_BS_MISMATCH.
 - --require_full_repo: abort if train_samples != 28709.
+
+Changes v5:
+- Keep compute-only profile timing separate from wall-clock timing.
+- avg_batch_time is reported as compute_sec_per_batch.
+- train_sec/batch from the trainer log is reported as wall_sec_per_batch.
 """
 
 from __future__ import annotations
@@ -34,7 +39,9 @@ for path in (SCRIPT_DIR, PROJECT_ROOT):
 from common import apply_cli_overrides, build_dataloader, create_trainer, load_config
 import torch
 
-FULL_TRAIN_SAMPLES = 28709   # FER-2013 reference – only used for require_full_repo check
+FULL_TRAIN_SAMPLES = 28709   # FER-2013 reference - only used for require_full_repo check
+FULL_VAL_SAMPLES = 3589
+FULL_TEST_SAMPLES = 3589
 TINY_REPO_THRESHOLD = 1000   # if train_samples < this → FAIL_TINY_REPO
 
 
@@ -211,11 +218,13 @@ def inspect_graph_repo(config: dict) -> dict:
 def parse_profile_output(text: str) -> dict:
     """Parse captured stdout into a profile dict.
 
-    Priority order for sec_per_batch:
-    1. [PROFILE average first N batches] block (most accurate).
-    2. epoch line  train_sec/batch=Xs  (single-epoch average).
+    Timing definitions:
+    - avg_data_time: DataLoader wait before the batch enters the training step.
+    - avg_batch_time / compute_sec_per_batch: to_device + forward + loss +
+      backward + optimizer + training-step overhead, excluding data_time.
+    - train_sec/batch / wall_sec_per_batch: wall-clock train loop average.
 
-    est_epoch_min = sec_per_batch * len_train_loader / 60
+    wall_epoch_min = wall_sec_per_batch * len_train_loader / 60
     (len_train_loader = actual DataLoader length on the full repo)
     """
     profile: dict = {}
@@ -274,25 +283,25 @@ def parse_profile_output(text: str) -> dict:
             "avg_loss_time":      r"avg_loss_time\s*=\s*([0-9.]+)s",
             "avg_backward_time":  r"avg_backward_time\s*=\s*([0-9.]+)s",
             "avg_optimizer_time": r"avg_optimizer_time\s*=\s*([0-9.]+)s",
-            "train_sec_per_batch": r"avg_batch_time\s*=\s*([0-9.]+)s",
+            "avg_batch_time":     r"avg_batch_time\s*=\s*([0-9.]+)s",
         }
         for k, pattern in metrics_map.items():
             m = re.search(pattern, avg_block)
             if m:
                 profile[k] = float(m.group(1))
 
-        # The trainer's estimated_full_epoch_minutes is computed from len(loader),
-        # so it is the authoritative value when the repo is full.
+        # This trainer estimate is compute-only because it is based on
+        # avg_batch_time, which excludes DataLoader wait time.
         if est_min_str and est_min_str != "unknown":
-            profile["estimated_train_min_per_epoch"] = float(est_min_str)
+            profile["compute_epoch_min"] = float(est_min_str)
 
     # ------------------------------------------------------------------ #
-    # 3. Fallback: epoch line  train_sec/batch=Xs                         #
+    # 3. Trainer wall-clock line: train_sec/batch=Xs                      #
     # ------------------------------------------------------------------ #
-    if "train_sec_per_batch" not in profile:
-        epoch_match = re.search(r"train_sec/batch=([0-9.]+)s", text)
-        if epoch_match:
-            profile["train_sec_per_batch"] = float(epoch_match.group(1))
+    epoch_matches = re.findall(r"train_sec/batch=([0-9.]+)s", text)
+    if epoch_matches:
+        profile["train_sec_per_batch"] = float(epoch_matches[-1])
+        profile["trainer_wall_sec_per_batch"] = float(epoch_matches[-1])
 
     # ------------------------------------------------------------------ #
     # 4. first_batch shapes                                               #
@@ -329,6 +338,10 @@ def parse_profile_output(text: str) -> dict:
         if m:
             profile[key] = int(m.group(1))
 
+    path_m = re.search(r"\[SPEED_BENCH\] graph_repo_path=([^\r\n]+)", text)
+    if path_m:
+        profile["graph_repo_path"] = path_m.group(1).strip()
+
     # ------------------------------------------------------------------ #
     # 6. Boolean flags                                                     #
     # ------------------------------------------------------------------ #
@@ -343,14 +356,48 @@ def parse_profile_output(text: str) -> dict:
         profile["tiny_repo"] = False
 
     # ------------------------------------------------------------------ #
-    # 7. est_epoch_min: recompute from sec/batch * len_train_loader       #
-    #    Only if the profile value is missing or computed from tiny repo.  #
+    # 7. Derive compute-vs-wall timing fields.                            #
     # ------------------------------------------------------------------ #
-    spb = profile.get("train_sec_per_batch")
+    data_spb = profile.get("avg_data_time")
+    compute_spb = profile.get("avg_batch_time")
+    if compute_spb is None:
+        pieces = [
+            profile.get("avg_to_device_time"),
+            profile.get("avg_forward_time"),
+            profile.get("avg_loss_time"),
+            profile.get("avg_backward_time"),
+            profile.get("avg_optimizer_time"),
+        ]
+        if all(v is not None for v in pieces):
+            compute_spb = sum(float(v) for v in pieces)
+
+    wall_spb = profile.get("trainer_wall_sec_per_batch")
+    if wall_spb is None and data_spb is not None and compute_spb is not None:
+        wall_spb = float(data_spb) + float(compute_spb)
+    elif wall_spb is None and compute_spb is not None:
+        wall_spb = float(compute_spb)
+
+    if data_spb is not None:
+        profile["data_sec_per_batch"] = float(data_spb)
+    if compute_spb is not None:
+        profile["compute_sec_per_batch"] = float(compute_spb)
+    if wall_spb is not None:
+        profile["wall_sec_per_batch"] = float(wall_spb)
+        # Backward-compatible name used by older summary code.
+        profile["train_sec_per_batch"] = float(wall_spb)
+
+    spb = profile.get("wall_sec_per_batch")
     ltl = profile.get("len_train_loader") or profile.get("batches_per_epoch")
+    if compute_spb and compute_spb > 0 and ltl and ltl > 0:
+        profile["compute_epoch_min"] = float(compute_spb) * float(ltl) / 60.0
     if spb and spb > 0 and ltl and ltl > 0:
-        if not profile.get("estimated_train_min_per_epoch"):
-            profile["estimated_train_min_per_epoch"] = spb * ltl / 60.0
+        profile["wall_epoch_min"] = float(spb) * float(ltl) / 60.0
+        # Backward-compatible name, now intentionally wall-clock.
+        profile["estimated_train_min_per_epoch"] = profile["wall_epoch_min"]
+    if data_spb is not None and wall_spb and wall_spb > 0:
+        profile["data_percent"] = float(data_spb) / float(wall_spb) * 100.0
+    if compute_spb is not None and wall_spb and wall_spb > 0:
+        profile["compute_percent"] = float(compute_spb) / float(wall_spb) * 100.0
 
     return profile
 
@@ -389,10 +436,21 @@ def run_scenario(config: dict, scenario_name: str, out_dir: Path,
                 f"--environment kaggle --mode build_graph --device cuda:0\n"
                 f"  3. Kaggle dataset slug mismatch – verify the dataset is attached correctly."
             )
-        if train_samples != FULL_TRAIN_SAMPLES:
+        expected_counts = {
+            "train_samples": FULL_TRAIN_SAMPLES,
+            "val_samples": FULL_VAL_SAMPLES,
+            "test_samples": FULL_TEST_SAMPLES,
+        }
+        mismatches = [
+            f"{key}: expected {expected}, got {repo_info.get(key)}"
+            for key, expected in expected_counts.items()
+            if repo_info.get(key) != expected
+        ]
+        if mismatches:
             raise RuntimeError(
-                f"--require_full_repo: expected {FULL_TRAIN_SAMPLES} train samples, "
-                f"got {train_samples} from {actual_repo_path}.\n"
+                "--require_full_repo: split size mismatch.\n"
+                + "\n".join(f"  - {item}" for item in mismatches)
+                + f"\nRepo: {actual_repo_path}\n"
                 f"Rebuild the full graph repo and re-run."
             )
 
@@ -528,14 +586,21 @@ def main():
         )
         profile_data["is_tiny_repo"] = is_tiny
 
-        # Re-confirm est_epoch_min using len_train_loader (actual) × sec/batch.
-        # Overwrite any value from the trainer which used a potentially tiny loader.
-        spb = profile_data.get("train_sec_per_batch")
+        # Re-confirm epoch estimates using the actual full train loader length.
+        # compute_sec_per_batch excludes data_time; wall_sec_per_batch includes it.
+        compute_spb = profile_data.get("compute_sec_per_batch")
+        spb = profile_data.get("wall_sec_per_batch") or profile_data.get("train_sec_per_batch")
         ltl = profile_data.get("len_train_loader") or profile_data.get("batches_per_epoch")
+        if compute_spb and compute_spb > 0 and ltl and ltl > 0:
+            profile_data["compute_epoch_min"] = float(compute_spb) * float(ltl) / 60.0
         if spb and spb > 0 and ltl and ltl > 0:
-            profile_data["estimated_train_min_per_epoch"] = spb * ltl / 60.0
-        elif is_tiny:
+            profile_data["wall_sec_per_batch"] = float(spb)
+            profile_data["train_sec_per_batch"] = float(spb)
+            profile_data["wall_epoch_min"] = float(spb) * float(ltl) / 60.0
+            profile_data["estimated_train_min_per_epoch"] = profile_data["wall_epoch_min"]
+        if is_tiny:
             profile_data["estimated_train_min_per_epoch"] = None   # not meaningful
+            profile_data["wall_epoch_min"] = None
 
         with open(metrics_file, "w") as f:
             json.dump(metrics, f, indent=2)
