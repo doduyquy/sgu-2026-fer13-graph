@@ -61,9 +61,9 @@ class EdgeAwarePixelGNNLayer(nn.Module):
         src_h = h[:, src, :]
         messages = self.message_mlp(torch.cat([src_h, encoded_edges], dim=-1))
 
-        aggregated = torch.zeros_like(h)
-        degree = torch.zeros(bsz, num_nodes, 1, device=h.device, dtype=h.dtype)
-        ones = torch.ones(num_edges, 1, device=h.device, dtype=h.dtype)
+        aggregated = torch.zeros_like(h, dtype=messages.dtype)
+        degree = torch.zeros(bsz, num_nodes, 1, device=h.device, dtype=messages.dtype)
+        ones = torch.ones(num_edges, 1, device=h.device, dtype=messages.dtype)
         for b in range(bsz):
             aggregated[b].index_add_(0, dst, messages[b])
             degree[b].index_add_(0, dst, ones)
