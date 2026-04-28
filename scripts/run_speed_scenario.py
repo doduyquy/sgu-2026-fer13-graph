@@ -372,14 +372,29 @@ def run_scenario(config: dict, scenario_name: str, out_dir: Path,
     repo_info = inspect_graph_repo(config)
     train_samples = repo_info.get("train_samples") or 0
     is_tiny = repo_info["is_tiny_repo"]
+    actual_repo_path = repo_info["graph_repo_path"]
 
-    if require_full_repo and train_samples != FULL_TRAIN_SAMPLES:
-        raise RuntimeError(
-            f"--require_full_repo: expected {FULL_TRAIN_SAMPLES} train samples, "
-            f"got {train_samples} from {repo_info['graph_repo_path']}. "
-            f"Run: python scripts/run_experiment.py --config configs/d5a.yaml "
-            f"--environment kaggle --mode build_graph --device cuda:0"
-        )
+    # Distinct failure: repo exists but NO chunk files found anywhere under it
+    no_chunks = (repo_info.get("train_samples") is None and is_tiny)
+
+    if require_full_repo:
+        if no_chunks:
+            raise RuntimeError(
+                f"--require_full_repo: No chunk files found at {actual_repo_path}.\n"
+                f"The directory exists but contains no train/chunk_*.pt files.\n"
+                f"Possible causes:\n"
+                f"  1. Wrong path – check the actual directory layout printed above.\n"
+                f"  2. Repo not built yet – run:\n"
+                f"     python scripts/run_experiment.py --config configs/d5a.yaml "
+                f"--environment kaggle --mode build_graph --device cuda:0\n"
+                f"  3. Kaggle dataset slug mismatch – verify the dataset is attached correctly."
+            )
+        if train_samples != FULL_TRAIN_SAMPLES:
+            raise RuntimeError(
+                f"--require_full_repo: expected {FULL_TRAIN_SAMPLES} train samples, "
+                f"got {train_samples} from {actual_repo_path}.\n"
+                f"Rebuild the full graph repo and re-run."
+            )
 
     if is_tiny:
         print(
