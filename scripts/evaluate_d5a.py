@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from common import (
     apply_cli_overrides,
@@ -50,7 +56,8 @@ def run_evaluate(config, checkpoint=None):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/d5a_experiment.yaml")
+    parser.add_argument("--config", default="configs/d5a.yaml")
+    parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--graph_repo_path", default=None)
@@ -59,7 +66,7 @@ def main() -> None:
     parser.add_argument("--max_test_batches", type=int, default=None)
     parser.add_argument("--no_wandb", action="store_true")
     args = parser.parse_args()
-    config = apply_cli_overrides(load_config(args.config), args)
+    config = apply_cli_overrides(load_config(args.config, environment=args.environment), args)
     run_evaluate(config, checkpoint=args.checkpoint)
 
 

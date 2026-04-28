@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
 from tqdm import tqdm
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from common import find_csv_root, load_config, resolve_path, split_csv_paths
 
@@ -50,7 +55,8 @@ def build_graph_repository(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None)
-    parser.add_argument("--csv_root", default="auto")
+    parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
+    parser.add_argument("--csv_root", default=None)
     parser.add_argument("--repo_root", "--graph_repo_path", dest="repo_root", default=None)
     parser.add_argument("--chunk_size", type=int, default=None)
     parser.add_argument("--connectivity", type=int, default=None)
@@ -58,7 +64,7 @@ def main() -> None:
     parser.add_argument("--no_overwrite", action="store_true")
     args = parser.parse_args()
 
-    cfg: Dict = load_config(args.config) if args.config else {}
+    cfg: Dict = load_config(args.config, environment=args.environment) if args.config else {}
     graph_cfg = GraphConfig.from_dict(cfg.get("graph", {}))
     if args.chunk_size is not None:
         graph_cfg.chunk_size = int(args.chunk_size)

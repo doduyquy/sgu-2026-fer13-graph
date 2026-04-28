@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import torch
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from common import load_config, resolve_path
 
@@ -60,9 +65,10 @@ def inspect_graph_repository(repo_root: str | Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=None)
+    parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
     parser.add_argument("--repo_root", "--graph_repo_path", dest="repo_root", default=None)
     args = parser.parse_args()
-    cfg = load_config(args.config) if args.config else {}
+    cfg = load_config(args.config, environment=args.environment) if args.config else {}
     repo = args.repo_root or cfg.get("paths", {}).get("graph_repo_path", "artifacts/graph_repo")
     inspect_graph_repository(resolve_path(repo))
 

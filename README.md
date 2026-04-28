@@ -44,48 +44,53 @@ cd fer_d5
 pip install -r requirements.txt
 ```
 
+## Config Layout
+
+- `configs/base.yaml`: shared defaults and `local`/`kaggle` path profiles.
+- `configs/d5a.yaml`: the D5A experiment config to edit for model, loss, optimizer, scheduler, training limits, and default environment.
+
 ## Local Commands
 
 Build graph repository:
 
 ```bash
-python scripts/build_graph_repo.py --config configs/d5a_local.yaml
+python scripts/build_graph_repo.py --config configs/d5a.yaml --environment local
 ```
 
 Inspect:
 
 ```bash
-python scripts/inspect_graph_repo.py --config configs/d5a_local.yaml
+python scripts/inspect_graph_repo.py --config configs/d5a.yaml --environment local
 ```
 
 Debug one batch:
 
 ```bash
-python scripts/debug_d5a_batch.py --config configs/d5a_local.yaml --batch_size 2
+python scripts/debug_d5a_batch.py --config configs/d5a.yaml --environment local --batch_size 2
 ```
 
 Smoke run:
 
 ```bash
-python scripts/run_experiment.py --config configs/d5a_local.yaml --mode smoke --max_train_batches 3 --max_val_batches 2 --max_test_batches 2 --batch_size 2
+python scripts/run_experiment.py --config configs/d5a.yaml --environment local --mode smoke --max_train_batches 3 --max_val_batches 2 --max_test_batches 2 --batch_size 2
 ```
 
 Train:
 
 ```bash
-python scripts/train_d5a.py --config configs/d5a_local.yaml
+python scripts/train_d5a.py --config configs/d5a.yaml --environment local
 ```
 
 Evaluate:
 
 ```bash
-python scripts/evaluate_d5a.py --config configs/d5a_local.yaml --checkpoint outputs/checkpoints/best.pth
+python scripts/evaluate_d5a.py --config configs/d5a.yaml --environment local --checkpoint outputs_local/checkpoints/best.pth
 ```
 
 Visualize:
 
 ```bash
-python scripts/visualize_d5.py --config configs/d5a_local.yaml --checkpoint outputs/checkpoints/best.pth --max_samples 16
+python scripts/visualize_d5.py --config configs/d5a.yaml --environment local --checkpoint outputs_local/checkpoints/best.pth --max_samples 16
 ```
 
 ## Kaggle Usage
@@ -100,13 +105,13 @@ Use `notebooks/kaggle_d5_end_to_end.ipynb`.
 Recommended first run:
 
 ```bash
-python scripts/run_experiment.py --config configs/d5a_kaggle.yaml --mode smoke --max_train_batches 3 --max_val_batches 2
+python scripts/run_experiment.py --config configs/d5a.yaml --environment kaggle --mode smoke --max_train_batches 3 --max_val_batches 2
 ```
 
 Full run:
 
 ```bash
-python scripts/run_experiment.py --config configs/d5a_kaggle.yaml --mode build_and_train
+python scripts/run_experiment.py --config configs/d5a.yaml --environment kaggle --mode build_and_train
 ```
 
 ## Expected Outputs

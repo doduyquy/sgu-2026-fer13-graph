@@ -17,6 +17,8 @@ from torch.utils.data import DataLoader
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_PARENT = PROJECT_ROOT.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
@@ -38,10 +40,47 @@ def deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-def load_config(config_path: str | Path) -> Dict[str, Any]:
+def load_config(config_path: str | Path, environment: str | None = None) -> Dict[str, Any]:
     path = resolve_existing_path(config_path)
+    cfg = _load_config_tree(path)
+    return resolve_environment_config(cfg, environment=environment)
+
+
+def _load_config_tree(config_path: str | Path, seen: Optional[set[Path]] = None) -> Dict[str, Any]:
+    path = Path(config_path).resolve()
+    seen = seen or set()
+    if path in seen:
+        raise ValueError(f"Circular config inheritance detected at: {path}")
+    seen.add(path)
     with path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
+
+    inherited = cfg.pop("inherits", [])
+    if isinstance(inherited, (str, Path)):
+        inherited = [inherited]
+
+    merged: Dict[str, Any] = {}
+    for parent in inherited:
+        parent_path = Path(parent)
+        if not parent_path.is_absolute():
+            parent_path = path.parent / parent_path
+        merged = deep_update(merged, _load_config_tree(parent_path, seen))
+    seen.remove(path)
+    return deep_update(merged, cfg)
+
+
+def resolve_environment_config(config: Dict[str, Any], environment: str | None = None) -> Dict[str, Any]:
+    cfg = dict(config)
+    env = environment or cfg.get("environment") or os.environ.get("D5_ENV")
+    if not env:
+        return cfg
+    env = str(env).lower()
+    profiles = cfg.get("environments", {})
+    if profiles and env not in profiles:
+        raise ValueError(f"Unknown environment={env!r}. Available: {sorted(profiles)}")
+    if profiles:
+        cfg = deep_update(cfg, profiles.get(env, {}) or {})
+    cfg["environment"] = env
     return cfg
 
 
@@ -120,6 +159,9 @@ def split_csv_paths(csv_root: str | Path | None = "auto") -> Dict[str, Path]:
 
 def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
     cfg = dict(config)
+    environment = getattr(args, "environment", None)
+    if environment is not None:
+        cfg = resolve_environment_config(cfg, environment=environment)
     paths = dict(cfg.get("paths", {}))
     data = dict(cfg.get("data", {}))
     training = dict(cfg.get("training", {}))

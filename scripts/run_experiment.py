@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import zipfile
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from common import apply_cli_overrides, load_config, resolve_path
 from build_graph_repo import build_graph_repository
@@ -120,10 +125,11 @@ def run_mode(config, mode: str, checkpoint=None, zip_outputs: bool = False):
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/d5a_experiment.yaml")
+    parser.add_argument("--config", default="configs/d5a.yaml")
+    parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
     parser.add_argument(
         "--mode",
-        default="smoke",
+        default=None,
         choices=[
             "build_graph",
             "inspect_graph",
@@ -145,11 +151,14 @@ def main() -> None:
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--max_test_batches", type=int, default=None)
     parser.add_argument("--no_wandb", action="store_true")
-    parser.add_argument("--zip_outputs", action="store_true")
+    parser.add_argument("--zip_outputs", action="store_true", default=None)
     args = parser.parse_args()
 
-    config = apply_cli_overrides(load_config(args.config), args)
-    run_mode(config, mode=args.mode, checkpoint=args.checkpoint, zip_outputs=args.zip_outputs)
+    config = apply_cli_overrides(load_config(args.config, environment=args.environment), args)
+    run_cfg = config.get("run", {})
+    mode = args.mode or run_cfg.get("mode", "smoke")
+    zip_outputs = bool(args.zip_outputs if args.zip_outputs is not None else run_cfg.get("zip_outputs", False))
+    run_mode(config, mode=mode, checkpoint=args.checkpoint, zip_outputs=zip_outputs)
 
 
 if __name__ == "__main__":
