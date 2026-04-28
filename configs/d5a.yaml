@@ -9,7 +9,7 @@ experiment:
   name: d5a_class_pixel_motif_retrieval
 
 run:
-  mode: smoke
+  mode: build_and_train
   zip_outputs: false
 
 model:
