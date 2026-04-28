@@ -194,6 +194,7 @@ class D5Trainer:
 
         # Data timer starts right before the first batch is fetched
         t_data_start = time.perf_counter()
+        first_batch_logged = False  # for SPEED_BENCH shape/bs_mismatch
 
         for batch_idx, batch in enumerate(progress):
             is_last = (max_batches is not None and batch_idx + 1 >= int(max_batches))
@@ -251,6 +252,27 @@ class D5Trainer:
                     f"logits={out['logits'].device} loss={loss.device}"
                 )
                 self._logged_train_device = True
+
+            # SPEED_BENCH: log first train batch shape + bs_mismatch (once)
+            if not first_batch_logged:
+                x_shape  = list(batch["x"].shape)
+                ea_shape = list(batch["edge_attr"].shape)
+                actual_n = x_shape[0]
+                # expected = DataLoader.batch_size attribute
+                expected_bs = getattr(
+                    self, "_expected_batch_size", None
+                )
+                print(f"[SPEED_BENCH] first_train_batch_x_shape={x_shape}")
+                print(f"[SPEED_BENCH] first_train_batch_edge_attr_shape={ea_shape}")
+                if expected_bs is not None:
+                    if actual_n != expected_bs:
+                        print(
+                            f"[SPEED_BENCH] bs_mismatch=True  "
+                            f"(expected x.shape[0]={expected_bs}, got {actual_n})"
+                        )
+                    else:
+                        print(f"[SPEED_BENCH] bs_mismatch=False  (x.shape[0]={actual_n} ✓)")
+                first_batch_logged = True
 
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Non-finite training loss at batch {batch_idx}")
@@ -423,6 +445,10 @@ class D5Trainer:
         else:
             full_epoch_batches = None
             total_train_batches = None
+
+        # Make configured batch_size available inside train_one_epoch for
+        # SPEED_BENCH first-batch bs_mismatch validation.
+        self._expected_batch_size = batch_size
 
         stale_epochs = 0
         history = []

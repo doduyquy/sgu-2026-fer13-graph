@@ -16,10 +16,11 @@ os.chdir(REPO_PATH)
 if str(REPO_PATH) not in sys.path:
     sys.path.insert(0, str(REPO_PATH))
 
-# Chạy 3 scenario bắt buộc: bs64, bs128, bs64_amp
+# Chạy 4 scenario bắt buộc: bs16, bs32, bs64, bs64_amp
 MANDATORY = [
+    "d5a_speed_bs16",
+    "d5a_speed_bs32",
     "d5a_speed_bs64",
-    "d5a_speed_bs128",
     "d5a_speed_bs64_amp",
 ]
 

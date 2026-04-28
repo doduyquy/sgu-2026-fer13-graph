@@ -142,8 +142,8 @@ def main():
             "oom": oom,
             # Will be filled from profile JSON
             "actual_batch_size": configured_bs,
-            "first_batch_x_shape": None,
-            "first_batch_edge_attr_shape": None,
+            "first_train_batch_x_shape": None,
+            "first_train_batch_edge_attr_shape": None,
             "len_train_loader": None,
             "batches_per_epoch": math.ceil(TRAIN_SAMPLES / configured_bs),
             "max_train_batches": max_train_batches_cfg,
@@ -195,21 +195,27 @@ def main():
                 if prof.get(key) is not None:
                     row[key] = prof[key]
 
-            # Shape fields (stored as lists)
-            row["first_batch_x_shape"] = str(prof.get("first_batch_x_shape", ""))
-            row["first_batch_edge_attr_shape"] = str(prof.get("first_batch_edge_attr_shape", ""))
+            # Shape fields (from trainer first train batch)
+            row["first_train_batch_x_shape"] = str(
+                prof.get("first_train_batch_x_shape") or
+                prof.get("first_batch_x_shape") or ""  # backwards compat
+            )
+            row["first_train_batch_edge_attr_shape"] = str(
+                prof.get("first_train_batch_edge_attr_shape") or
+                prof.get("first_batch_edge_attr_shape") or ""
+            )
             row["bs_mismatch"] = bool(prof.get("bs_mismatch", False))
 
             if row["bs_mismatch"]:
                 row["status"] = "FAIL_BS_MISMATCH"
 
-            # Recompute estimated epoch from actual values if still missing
-            if row["estimated_train_min_per_epoch"] is None and row["train_sec_per_batch"] is not None:
-                bpe = row.get("batches_per_epoch")
-                if bpe:
-                    row["estimated_train_min_per_epoch"] = (
-                        row["train_sec_per_batch"] * bpe / 60.0
-                    )
+            # Guaranteed est_epoch_min: sec_per_batch * batches_per_epoch / 60
+            # Never left as None or 0.0 when sec/batch is known.
+            spb = row.get("train_sec_per_batch")
+            bpe = row.get("batches_per_epoch")
+            if spb and spb > 0 and bpe and bpe > 0:
+                if not row.get("estimated_train_min_per_epoch"):
+                    row["estimated_train_min_per_epoch"] = spb * bpe / 60.0
 
             # Auto-annotation
             note_parts = []
@@ -236,7 +242,7 @@ def main():
     # ------------------------------------------------------------------ #
     headers = [
         "scenario_name", "configured_batch_size", "actual_batch_size",
-        "first_batch_x_shape", "first_batch_edge_attr_shape",
+        "first_train_batch_x_shape", "first_train_batch_edge_attr_shape",
         "num_workers", "pin_memory", "persistent_workers", "prefetch_factor",
         "graph_cache_chunks", "amp",
         "len_train_loader", "batches_per_epoch", "max_train_batches",
@@ -260,20 +266,20 @@ def main():
     # ------------------------------------------------------------------ #
     md_lines = [
         "# Speed Benchmark Results\n",
-        "| scenario | actual_bs | x_shape | sec/batch | batches/epoch |"
-        " est_epoch_min | max_vram_gb | profile_batches_recorded | status |",
+        "| scenario | actual_bs | first_train_batch_x_shape | sec/batch"
+        " | batches/epoch | est_epoch_min | max_vram_gb | profile_recorded | status |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
-        x_shape = r.get("first_batch_x_shape") or "-"
-        spb = r.get("train_sec_per_batch")
-        est = r.get("estimated_train_min_per_epoch")
-        vram = r.get("cuda_max_allocated_gb")
+        x_shape  = r.get("first_train_batch_x_shape") or "-"
+        spb      = r.get("train_sec_per_batch")
+        est      = r.get("estimated_train_min_per_epoch")
+        vram     = r.get("cuda_max_allocated_gb")
         recorded = r.get("profile_batches_recorded")
         requested = r.get("profile_batches_requested")
 
-        spb_str = f"{spb:.3f}s" if spb is not None else "-"
-        est_str = f"{est:.1f}" if est is not None else "-"
+        spb_str  = f"{spb:.3f}s" if spb is not None else "-"
+        est_str  = f"{est:.1f}"  if (est is not None and est > 0) else "-"
         vram_str = f"{vram:.2f}" if vram is not None else "-"
         if recorded is not None and requested is not None:
             rec_str = f"{recorded}/{requested}"
