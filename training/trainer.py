@@ -215,14 +215,31 @@ class D5Trainer:
                 print(f"[SPEED_BENCH] first_batch_edge_attr_shape={ea_shape}")
                 configured_bs = self._configured_bs
                 if configured_bs is not None:
-                    if n_samples != configured_bs or ea_shape[0] != configured_bs:
+                    # Compute expected first-batch size:
+                    # If the dataset is smaller than configured_bs, the last/only
+                    # batch will have fewer samples — that is NOT a mismatch.
+                    dataset_size = (
+                        len(loader.dataset)
+                        if hasattr(loader, "dataset")
+                        else None
+                    )
+                    if dataset_size is not None:
+                        expected_bs = min(configured_bs, dataset_size)
+                    else:
+                        expected_bs = configured_bs
+                    if n_samples != expected_bs or ea_shape[0] != expected_bs:
                         print(
                             f"[SPEED_BENCH] bs_mismatch=True  "
-                            f"(expected {configured_bs}, got x.shape[0]={n_samples}, "
+                            f"(expected {expected_bs} = min({configured_bs}, "
+                            f"dataset={dataset_size}), "
+                            f"got x.shape[0]={n_samples}, "
                             f"edge_attr.shape[0]={ea_shape[0]})"
                         )
                     else:
-                        print(f"[SPEED_BENCH] bs_mismatch=False  (x.shape[0]={n_samples} \u2713)")
+                        print(
+                            f"[SPEED_BENCH] bs_mismatch=False  "
+                            f"(x.shape[0]={n_samples}, expected={expected_bs} \u2713)"
+                        )
                 _first_batch_logged = True
 
             do_profile = profile_n > 0 and batch_idx < profile_n

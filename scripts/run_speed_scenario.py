@@ -1,13 +1,14 @@
 """Run a single speed scenario and log results.
 
-Changes v3:
-- first_train_batch_x_shape is now captured from batch_idx=0 inside the train loop
-  (not via a dangling next(iter(train_loader)) before training starts).
-- bs_mismatch check applies to ALL configured batch sizes (not just 128).
-- profile_batches_recorded < requested discrepancy is noted when max_train_batches
-  is smaller than profile_batches.
-- estimated_train_min_per_epoch fallback always uses batches_per_epoch (full epoch),
-  not total_train_batches (capped).
+Changes v4:
+- inspect_graph_repo() runs before training and emits [SPEED_BENCH] tags for
+  graph_repo_path, train_samples, val_samples, test_samples.
+- If train_samples < 1000 → status = FAIL_TINY_REPO (no result kept for best).
+- batches_per_epoch is now len(train_loader) (actual), not ceil(28709/bs).
+- est_epoch_min = sec_per_batch * len(train_loader) / 60  (actual, not hardcoded).
+- bs_mismatch uses expected_first_batch = min(configured_bs, train_samples):
+    if x.shape[0] != expected_first_batch → FAIL_BS_MISMATCH.
+- --require_full_repo: abort if train_samples != 28709.
 """
 
 from __future__ import annotations
@@ -33,7 +34,8 @@ for path in (SCRIPT_DIR, PROJECT_ROOT):
 from common import apply_cli_overrides, build_dataloader, create_trainer, load_config
 import torch
 
-TRAIN_SAMPLES = 28709  # FER-2013 training set size
+FULL_TRAIN_SAMPLES = 28709   # FER-2013 reference – only used for require_full_repo check
+TINY_REPO_THRESHOLD = 1000   # if train_samples < this → FAIL_TINY_REPO
 
 
 class OutputTee:
@@ -60,24 +62,79 @@ def deep_merge(dict1, dict2):
     return dict1
 
 
+def inspect_graph_repo(config: dict) -> dict:
+    """Inspect the graph repository and print diagnostic [SPEED_BENCH] tags.
+
+    Returns a dict with keys:
+        graph_repo_path, train_samples, val_samples, test_samples,
+        is_tiny_repo (bool).
+    """
+    from common import resolve_path
+    paths = config.get("paths", {})
+    repo_raw = paths.get("graph_repo_path", "artifacts/graph_repo")
+    repo = resolve_path(repo_raw)
+
+    info = {
+        "graph_repo_path": str(repo) if repo else str(repo_raw),
+        "train_samples": None,
+        "val_samples": None,
+        "test_samples": None,
+        "is_tiny_repo": False,
+    }
+
+    print(f"[SPEED_BENCH] graph_repo_path={info['graph_repo_path']}")
+
+    if repo is None or not repo.exists():
+        print(f"[SPEED_BENCH] graph_repo_missing=True  path={info['graph_repo_path']}")
+        info["is_tiny_repo"] = True   # treat missing as tiny
+        return info
+
+    # Count samples per split by inspecting the dataset
+    try:
+        from data.full_graph_dataset import FullGraphDataset
+        data_cfg = config.get("data", {})
+        chunks = int(data_cfg.get("graph_cache_chunks", 1))
+
+        for split in ("train", "val", "test"):
+            try:
+                ds = FullGraphDataset(repo_root=repo, split=split,
+                                      graph_cache_chunks=chunks)
+                count = len(ds)
+                info[f"{split}_samples"] = count
+                print(f"[SPEED_BENCH] {split}_samples={count}")
+            except Exception as exc:
+                print(f"[SPEED_BENCH] {split}_samples=ERROR  ({exc})")
+
+    except Exception as exc:
+        print(f"[SPEED_BENCH] repo_inspect_error={exc}")
+
+    train_n = info.get("train_samples") or 0
+    info["is_tiny_repo"] = train_n < TINY_REPO_THRESHOLD
+    if info["is_tiny_repo"]:
+        print(
+            f"[SPEED_BENCH] tiny_repo=True  "
+            f"train_samples={train_n} < threshold={TINY_REPO_THRESHOLD}"
+        )
+    else:
+        print(f"[SPEED_BENCH] tiny_repo=False")
+
+    return info
+
+
 def parse_profile_output(text: str) -> dict:
     """Parse captured stdout into a profile dict.
 
-    Priority order for sec_per_batch / estimated_train_min_per_epoch:
-    1. [PROFILE average first N batches] block (most accurate, uses real avg).
-    2. epoch line ``train_sec/batch=Xs`` (single-epoch average).
+    Priority order for sec_per_batch:
+    1. [PROFILE average first N batches] block (most accurate).
+    2. epoch line  train_sec/batch=Xs  (single-epoch average).
 
-    Also extracts:
-    - cuda_max_allocated_gb from last [PROFILE batch=N] block.
-    - profile_batches_requested / profile_batches_recorded.
-    - first_batch_x_shape, first_batch_edge_attr_shape.
-    - actual_batch_size, len_train_loader, batches_per_epoch, max_train_batches,
-      number_of_train_batches_run (injected by run_speed_scenario main()).
+    est_epoch_min = sec_per_batch * len_train_loader / 60
+    (len_train_loader = actual DataLoader length on the full repo)
     """
     profile: dict = {}
 
     # ------------------------------------------------------------------ #
-    # 1. Per-batch PROFILE blocks – take the last one for peak VRAM.      #
+    # 1. Per-batch PROFILE blocks – take the last for peak VRAM.          #
     # ------------------------------------------------------------------ #
     per_batch_blocks = list(re.finditer(
         r"\[PROFILE batch=(\d+)\]"
@@ -109,7 +166,6 @@ def parse_profile_output(text: str) -> dict:
             text, re.DOTALL,
         )
         if avg_match:
-            # groups: 1=n, 2=block, 3=est_min
             profile["profile_batches_requested"] = int(avg_match.group(1))
             profile["profile_batches_recorded"] = int(avg_match.group(1))
             avg_block = avg_match.group(2)
@@ -138,6 +194,8 @@ def parse_profile_output(text: str) -> dict:
             if m:
                 profile[k] = float(m.group(1))
 
+        # The trainer's estimated_full_epoch_minutes is computed from len(loader),
+        # so it is the authoritative value when the repo is full.
         if est_min_str and est_min_str != "unknown":
             profile["estimated_train_min_per_epoch"] = float(est_min_str)
 
@@ -150,18 +208,7 @@ def parse_profile_output(text: str) -> dict:
             profile["train_sec_per_batch"] = float(epoch_match.group(1))
 
     # ------------------------------------------------------------------ #
-    # 4. If estimated_epoch still missing, compute from sec_per_batch.    #
-    # ------------------------------------------------------------------ #
-    if "estimated_train_min_per_epoch" not in profile and "train_sec_per_batch" in profile:
-        # Use the full epoch batch count if available, else use TRAIN_SAMPLES
-        bpe = profile.get("batches_per_epoch")
-        if bpe is not None:
-            profile["estimated_train_min_per_epoch"] = (
-                profile["train_sec_per_batch"] * bpe / 60.0
-            )
-
-    # ------------------------------------------------------------------ #
-    # 5. first_batch shapes                                               #
+    # 4. first_batch shapes                                               #
     # ------------------------------------------------------------------ #
     x_shape_m = re.search(r"\[SPEED_BENCH\] first_batch_x_shape=(\[[^\]]+\])", text)
     if x_shape_m:
@@ -178,12 +225,16 @@ def parse_profile_output(text: str) -> dict:
             profile["first_batch_edge_attr_shape"] = ea_shape_m.group(1)
 
     # ------------------------------------------------------------------ #
-    # 6. Scenario-level diagnostic fields                                 #
+    # 5. Scenario-level integer fields from [SPEED_BENCH] tags            #
     # ------------------------------------------------------------------ #
     for key in (
         "actual_batch_size",
         "len_train_loader",
+        "len_train_dataset",
         "batches_per_epoch",
+        "train_samples",
+        "val_samples",
+        "test_samples",
         "max_train_batches",
         "number_of_train_batches_run",
     ):
@@ -191,17 +242,35 @@ def parse_profile_output(text: str) -> dict:
         if m:
             profile[key] = int(m.group(1))
 
-    # bs_mismatch flag
+    # ------------------------------------------------------------------ #
+    # 6. Boolean flags                                                     #
+    # ------------------------------------------------------------------ #
     if re.search(r"\[SPEED_BENCH\] bs_mismatch=True", text):
         profile["bs_mismatch"] = True
     if re.search(r"\[SPEED_BENCH\] bs_mismatch=False", text):
         profile["bs_mismatch"] = False
 
+    if re.search(r"\[SPEED_BENCH\] tiny_repo=True", text):
+        profile["tiny_repo"] = True
+    if re.search(r"\[SPEED_BENCH\] tiny_repo=False", text):
+        profile["tiny_repo"] = False
+
+    # ------------------------------------------------------------------ #
+    # 7. est_epoch_min: recompute from sec/batch * len_train_loader       #
+    #    Only if the profile value is missing or computed from tiny repo.  #
+    # ------------------------------------------------------------------ #
+    spb = profile.get("train_sec_per_batch")
+    ltl = profile.get("len_train_loader") or profile.get("batches_per_epoch")
+    if spb and spb > 0 and ltl and ltl > 0:
+        if not profile.get("estimated_train_min_per_epoch"):
+            profile["estimated_train_min_per_epoch"] = spb * ltl / 60.0
+
     return profile
 
 
-def run_scenario(config: dict, scenario_name: str, out_dir: Path) -> dict:
-    """Execute one scenario in-process and return the profile dict."""
+def run_scenario(config: dict, scenario_name: str, out_dir: Path,
+                 require_full_repo: bool = False) -> tuple:
+    """Execute one scenario in-process and return (result, tiny_repo_flag)."""
     import math
 
     training_cfg = config.get("training", {})
@@ -210,19 +279,45 @@ def run_scenario(config: dict, scenario_name: str, out_dir: Path) -> dict:
     max_train_batches = training_cfg.get("max_train_batches")
     profile_batches_requested = int(training_cfg.get("profile_batches", 0))
 
-    # Build data loaders
+    # ------------------------------------------------------------------ #
+    # 1. Inspect graph repo BEFORE building the loader                    #
+    # ------------------------------------------------------------------ #
+    repo_info = inspect_graph_repo(config)
+    train_samples = repo_info.get("train_samples") or 0
+    is_tiny = repo_info["is_tiny_repo"]
+
+    if require_full_repo and train_samples != FULL_TRAIN_SAMPLES:
+        raise RuntimeError(
+            f"--require_full_repo: expected {FULL_TRAIN_SAMPLES} train samples, "
+            f"got {train_samples} from {repo_info['graph_repo_path']}. "
+            f"Run: python scripts/run_experiment.py --config configs/d5a.yaml "
+            f"--environment kaggle --mode build_graph --device cuda:0"
+        )
+
+    if is_tiny:
+        print(
+            f"[SPEED_BENCH] FAIL_TINY_REPO: train_samples={train_samples} < "
+            f"{TINY_REPO_THRESHOLD}. Results are not representative."
+        )
+        # Still run training so we capture sec/batch, but mark as tiny.
+
+    # ------------------------------------------------------------------ #
+    # 2. Build data loaders                                               #
+    # ------------------------------------------------------------------ #
     train_loader = build_dataloader(config, split="train", shuffle=True)
     val_loader = build_dataloader(config, split="val", shuffle=False)
 
-    # ---------- diagnostic prints (captured by OutputTee) ---------- #
     actual_bs = getattr(train_loader, "batch_size", configured_bs)
     len_loader = len(train_loader)
-    batches_per_epoch_full = math.ceil(TRAIN_SAMPLES / actual_bs)
+    len_dataset = len(train_loader.dataset) if hasattr(train_loader, "dataset") else train_samples
     max_tb = int(max_train_batches) if max_train_batches is not None else len_loader
 
+    # Emit actual loader stats (not hardcoded 28709)
     print(f"[SPEED_BENCH] actual_batch_size={actual_bs}")
     print(f"[SPEED_BENCH] len_train_loader={len_loader}")
-    print(f"[SPEED_BENCH] batches_per_epoch={batches_per_epoch_full}")
+    print(f"[SPEED_BENCH] len_train_dataset={len_dataset}")
+    print(f"[SPEED_BENCH] batches_per_epoch={len_loader}")   # actual, not ceil(28709/bs)
+    print(f"[SPEED_BENCH] train_samples={train_samples}")
     print(f"[SPEED_BENCH] max_train_batches={max_tb}")
 
     # Warn if profile window will be truncated by max_train_batches
@@ -235,12 +330,9 @@ def run_scenario(config: dict, scenario_name: str, out_dir: Path) -> dict:
                 f"will only record={effective_profile} profile batches"
             )
 
-    # ---------- NOTE: first_train_batch_x_shape is captured inside train loop ---------- #
-    # The trainer logs [SPEED_BENCH] first_batch_x_shape=... for batch_idx=0.
-    # We do NOT call next(iter(train_loader)) here to avoid consuming the iterator
-    # out of sync with the actual train loop.
-
-    # ---------- train ---------- #
+    # ------------------------------------------------------------------ #
+    # 3. Train (first_train_batch_x_shape captured inside trainer loop)  #
+    # ------------------------------------------------------------------ #
     trainer = create_trainer(config)
     result = trainer.fit(
         train_loader=train_loader,
@@ -252,15 +344,11 @@ def run_scenario(config: dict, scenario_name: str, out_dir: Path) -> dict:
         max_val_batches=training_cfg.get("max_val_batches"),
     )
 
-    # Count actual batches run (from history)
     history = result.get("history", [])
-    if history:
-        number_of_train_batches_run = int(history[-1].get("train_batches", 0))
-    else:
-        number_of_train_batches_run = 0
+    number_of_train_batches_run = int(history[-1].get("train_batches", 0)) if history else 0
     print(f"[SPEED_BENCH] number_of_train_batches_run={number_of_train_batches_run}")
 
-    return result, None  # bs_mismatch is now determined from parsed profile
+    return result, is_tiny
 
 
 def main():
@@ -273,6 +361,10 @@ def main():
     parser.add_argument("--csv_root", default=None)
     parser.add_argument("--output_dir", default="outputs/speed_benchmark")
     parser.add_argument("--no_wandb", action="store_true")
+    parser.add_argument(
+        "--require_full_repo", action="store_true",
+        help="Abort if train_samples != 28709",
+    )
     args = parser.parse_args()
 
     # Load base config
@@ -315,20 +407,33 @@ def main():
     sys.stdout = OutputTee(original_stdout, stdout_capture)
 
     try:
-        result, bs_mismatch = run_scenario(config, scenario_name, out_dir)
+        result, is_tiny = run_scenario(
+            config, scenario_name, out_dir,
+            require_full_repo=args.require_full_repo,
+        )
         metrics = result.get("history", [{}])[-1] if result.get("history") else {}
 
         output_text = stdout_capture.getvalue()
         profile_data = parse_profile_output(output_text)
 
-        # bs_mismatch is now parsed from [SPEED_BENCH] tags emitted by the trainer
-        # (covers ALL configured batch sizes, not just 128)
+        # bs_mismatch is parsed from [SPEED_BENCH] tags emitted by the trainer
         bs_mismatch = bool(profile_data.get("bs_mismatch", False))
 
         # Configured batch size from scenario yaml (ground truth for table)
         profile_data["configured_batch_size"] = int(
-            scenario_cfg.get("data", {}).get("batch_size", config.get("data", {}).get("batch_size", 16))
+            scenario_cfg.get("data", {}).get("batch_size",
+                config.get("data", {}).get("batch_size", 16))
         )
+        profile_data["is_tiny_repo"] = is_tiny
+
+        # Re-confirm est_epoch_min using len_train_loader (actual) × sec/batch.
+        # Overwrite any value from the trainer which used a potentially tiny loader.
+        spb = profile_data.get("train_sec_per_batch")
+        ltl = profile_data.get("len_train_loader") or profile_data.get("batches_per_epoch")
+        if spb and spb > 0 and ltl and ltl > 0:
+            profile_data["estimated_train_min_per_epoch"] = spb * ltl / 60.0
+        elif is_tiny:
+            profile_data["estimated_train_min_per_epoch"] = None   # not meaningful
 
         with open(metrics_file, "w") as f:
             json.dump(metrics, f, indent=2)
@@ -341,7 +446,12 @@ def main():
             f.write(f"Metrics: {json.dumps(metrics, indent=2)}\n")
             f.write(f"Profile: {json.dumps(profile_data, indent=2)}\n")
 
-        status = "FAIL_BS_MISMATCH" if bs_mismatch else "SUCCESS"
+        if is_tiny:
+            status = "FAIL_TINY_REPO"
+        elif bs_mismatch:
+            status = "FAIL_BS_MISMATCH"
+        else:
+            status = "SUCCESS"
         print(f"\n[Scenario {scenario_name} Complete] status={status} Saved to {out_dir}")
 
     except Exception as e:
