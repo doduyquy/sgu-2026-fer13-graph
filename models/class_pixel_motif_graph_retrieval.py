@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from fer_d5.models.edge_gnn import EdgeAwarePixelGNNEncoder
+from models.edge_gnn import EdgeAwarePixelGNNEncoder
 
 
 class ClassPixelMotifGraphRetrieval(nn.Module):

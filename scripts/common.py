@@ -20,12 +20,12 @@ PACKAGE_PARENT = PROJECT_ROOT.parent
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from fer_d5.data.full_graph_dataset import FullGraphDataset, collate_fn_full_graph
-from fer_d5.data.graph_config import GraphConfig
-from fer_d5.models.registry import build_model
-from fer_d5.training.losses import D5RetrievalLoss
-from fer_d5.training.optimizer import build_optimizer, build_scheduler
-from fer_d5.training.trainer import D5Trainer, set_seed
+from data.full_graph_dataset import FullGraphDataset, collate_fn_full_graph
+from data.graph_config import GraphConfig
+from models.registry import build_model
+from training.losses import D5RetrievalLoss
+from training.optimizer import build_optimizer, build_scheduler
+from training.trainer import D5Trainer, set_seed
 
 
 def deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

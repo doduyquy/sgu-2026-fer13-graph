@@ -9,8 +9,8 @@ import torch
 
 from common import load_config, resolve_path
 
-from fer_d5.data.graph_repository import GraphRepositoryReader
-from fer_d5.data.graph_resolver import GraphResolver
+from data.graph_repository import GraphRepositoryReader
+from data.graph_resolver import GraphResolver
 
 
 def _finite(name: str, tensor: torch.Tensor) -> str:

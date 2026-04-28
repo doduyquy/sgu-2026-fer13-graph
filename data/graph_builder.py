@@ -7,9 +7,9 @@ from typing import List, Tuple
 import numpy as np
 import torch
 
-from fer_d5.data.graph_config import GraphConfig
-from fer_d5.data.graph_types import PixelGraphSample, SharedGraphStructure
-from fer_d5.data.raw_dataset import RawSample
+from data.graph_config import GraphConfig
+from data.graph_types import PixelGraphSample, SharedGraphStructure
+from data.raw_dataset import RawSample
 
 
 def _neighbor_offsets(connectivity: int) -> List[Tuple[int, int]]:

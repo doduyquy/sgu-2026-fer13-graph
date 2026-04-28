@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from fer_d5.data.graph_types import PixelGraphSample, ResolvedPixelGraph, SharedGraphStructure
+from data.graph_types import PixelGraphSample, ResolvedPixelGraph, SharedGraphStructure
 
 
 class GraphResolver:

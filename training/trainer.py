@@ -11,8 +11,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from fer_d5.evaluation.metrics import compute_metrics
-from fer_d5.training.optimizer import step_scheduler
+from evaluation.metrics import compute_metrics
+from training.optimizer import step_scheduler
 
 
 def set_seed(seed: int) -> None:

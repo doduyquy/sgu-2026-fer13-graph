@@ -12,7 +12,7 @@ from common import (
     resolve_path,
 )
 
-from fer_d5.visualization.visualize_d5_motifs import (
+from visualization.visualize_d5_motifs import (
     save_class_gate_heatmaps,
     save_sample_attention_maps,
 )

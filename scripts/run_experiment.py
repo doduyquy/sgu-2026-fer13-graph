@@ -14,7 +14,7 @@ from inspect_graph_repo import inspect_graph_repository
 from train_d5a import run_train
 from visualize_d5 import run_visualize
 
-from fer_d5.data.graph_config import GraphConfig
+from data.graph_config import GraphConfig
 
 
 def _repo_ready(repo_path: Path) -> bool:

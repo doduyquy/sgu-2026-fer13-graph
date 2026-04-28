@@ -11,9 +11,9 @@ from typing import Dict, Iterator, List, Optional
 import torch
 from torch.utils.data import Dataset
 
-from fer_d5.data.graph_config import GraphConfig
-from fer_d5.data.graph_resolver import GraphResolver
-from fer_d5.data.graph_types import PixelGraphSample, ResolvedPixelGraph, SharedGraphStructure
+from data.graph_config import GraphConfig
+from data.graph_resolver import GraphResolver
+from data.graph_types import PixelGraphSample, ResolvedPixelGraph, SharedGraphStructure
 
 MANIFEST_FILENAME = "manifest.pt"
 SHARED_DIR = "shared"

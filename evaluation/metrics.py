@@ -12,7 +12,7 @@ from sklearn.metrics import (
     f1_score,
 )
 
-from fer_d5.data.labels import EMOTION_NAMES
+from data.labels import EMOTION_NAMES
 
 
 def compute_metrics(y_true, y_pred) -> Dict:

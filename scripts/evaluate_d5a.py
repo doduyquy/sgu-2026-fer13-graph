@@ -13,7 +13,7 @@ from common import (
     resolve_path,
 )
 
-from fer_d5.evaluation.evaluator import evaluate_model, save_confusion_matrix, save_predictions_csv
+from evaluation.evaluator import evaluate_model, save_confusion_matrix, save_predictions_csv
 
 
 def run_evaluate(config, checkpoint=None):

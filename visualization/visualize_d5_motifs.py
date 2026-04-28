@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from fer_d5.data.labels import EMOTION_NAMES, NUM_CLASSES
-from fer_d5.training.trainer import move_to_device
+from data.labels import EMOTION_NAMES, NUM_CLASSES
+from training.trainer import move_to_device
 
 
 def node_map(vec, height: int = 48, width: int = 48) -> np.ndarray:

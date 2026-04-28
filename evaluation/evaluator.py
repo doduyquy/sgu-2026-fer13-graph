@@ -10,13 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from fer_d5.data.labels import EMOTION_NAMES, NUM_CLASSES
-from fer_d5.evaluation.metrics import (
+from data.labels import EMOTION_NAMES, NUM_CLASSES
+from evaluation.metrics import (
     classification_report_dict,
     compute_metrics,
     confusion_matrix_array,
 )
-from fer_d5.training.trainer import move_to_device
+from training.trainer import move_to_device
 
 
 @torch.no_grad()

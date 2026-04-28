@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fer_d5.models.class_pixel_motif_graph_retrieval import ClassPixelMotifGraphRetrieval
+from models.class_pixel_motif_graph_retrieval import ClassPixelMotifGraphRetrieval
 
 
 def build_model(config: Dict[str, Any]) -> ClassPixelMotifGraphRetrieval:

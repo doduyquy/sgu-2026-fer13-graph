@@ -8,8 +8,8 @@ from typing import Dict, List
 import torch
 from torch.utils.data import Dataset
 
-from fer_d5.data.graph_repository import ChunkedGraphDataset
-from fer_d5.data.graph_types import ResolvedPixelGraph
+from data.graph_repository import ChunkedGraphDataset
+from data.graph_types import ResolvedPixelGraph
 
 
 class FullGraphDataset(Dataset):

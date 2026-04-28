@@ -10,10 +10,10 @@ from tqdm import tqdm
 
 from common import find_csv_root, load_config, resolve_path, split_csv_paths
 
-from fer_d5.data.graph_builder import PixelGraphBuilder, SharedGraphBuilder
-from fer_d5.data.graph_config import GraphConfig
-from fer_d5.data.graph_repository import GraphRepositoryWriter
-from fer_d5.data.raw_dataset import RawFERDataset
+from data.graph_builder import PixelGraphBuilder, SharedGraphBuilder
+from data.graph_config import GraphConfig
+from data.graph_repository import GraphRepositoryWriter
+from data.raw_dataset import RawFERDataset
 
 
 def build_graph_repository(
