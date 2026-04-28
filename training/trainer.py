@@ -103,6 +103,8 @@ class D5Trainer:
 
         # Profiling
         self.profile_batches = int(profile_batches)
+        # configured_bs for bs_mismatch validation (set by fit() before training)
+        self._configured_bs: Optional[int] = None
 
         first_param = next(self.model.parameters())
         print(f"trainer device: {self.device}")
@@ -192,15 +194,36 @@ class D5Trainer:
         )}
         profile_avg_printed = False
 
+        # first-batch shape logging (only on epoch 1, batch_idx 0)
+        _first_batch_logged = epoch > 1  # skip for epochs after first
+
         # Data timer starts right before the first batch is fetched
         t_data_start = time.perf_counter()
-        first_batch_logged = False  # for SPEED_BENCH shape/bs_mismatch
 
         for batch_idx, batch in enumerate(progress):
             is_last = (max_batches is not None and batch_idx + 1 >= int(max_batches))
 
             if max_batches is not None and batch_idx >= int(max_batches):
                 break
+
+            # ---- first-batch shape + bs_mismatch (from actual train loop, epoch 1 only) ----
+            if not _first_batch_logged:
+                x_shape = list(batch["x"].shape)
+                ea_shape = list(batch["edge_attr"].shape)
+                n_samples = x_shape[0]
+                print(f"[SPEED_BENCH] first_batch_x_shape={x_shape}")
+                print(f"[SPEED_BENCH] first_batch_edge_attr_shape={ea_shape}")
+                configured_bs = self._configured_bs
+                if configured_bs is not None:
+                    if n_samples != configured_bs or ea_shape[0] != configured_bs:
+                        print(
+                            f"[SPEED_BENCH] bs_mismatch=True  "
+                            f"(expected {configured_bs}, got x.shape[0]={n_samples}, "
+                            f"edge_attr.shape[0]={ea_shape[0]})"
+                        )
+                    else:
+                        print(f"[SPEED_BENCH] bs_mismatch=False  (x.shape[0]={n_samples} \u2713)")
+                _first_batch_logged = True
 
             do_profile = profile_n > 0 and batch_idx < profile_n
 
@@ -252,27 +275,6 @@ class D5Trainer:
                     f"logits={out['logits'].device} loss={loss.device}"
                 )
                 self._logged_train_device = True
-
-            # SPEED_BENCH: log first train batch shape + bs_mismatch (once)
-            if not first_batch_logged:
-                x_shape  = list(batch["x"].shape)
-                ea_shape = list(batch["edge_attr"].shape)
-                actual_n = x_shape[0]
-                # expected = DataLoader.batch_size attribute
-                expected_bs = getattr(
-                    self, "_expected_batch_size", None
-                )
-                print(f"[SPEED_BENCH] first_train_batch_x_shape={x_shape}")
-                print(f"[SPEED_BENCH] first_train_batch_edge_attr_shape={ea_shape}")
-                if expected_bs is not None:
-                    if actual_n != expected_bs:
-                        print(
-                            f"[SPEED_BENCH] bs_mismatch=True  "
-                            f"(expected x.shape[0]={expected_bs}, got {actual_n})"
-                        )
-                    else:
-                        print(f"[SPEED_BENCH] bs_mismatch=False  (x.shape[0]={actual_n} ✓)")
-                first_batch_logged = True
 
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Non-finite training loss at batch {batch_idx}")
@@ -433,6 +435,8 @@ class D5Trainer:
         import math
         dataset_size = getattr(train_loader.dataset, "__len__", lambda: None)()
         batch_size = getattr(train_loader, "batch_size", None)
+        # Set configured_bs for bs_mismatch validation in train_one_epoch
+        self._configured_bs = int(batch_size) if batch_size is not None else None
         # full_epoch_batches: used for estimated epoch time (NOT capped by max_train_batches).
         # total_train_batches: passed to train_one_epoch as the effective batches this run.
         if dataset_size is not None and batch_size is not None and batch_size > 0:
@@ -445,10 +449,6 @@ class D5Trainer:
         else:
             full_epoch_batches = None
             total_train_batches = None
-
-        # Make configured batch_size available inside train_one_epoch for
-        # SPEED_BENCH first-batch bs_mismatch validation.
-        self._expected_batch_size = batch_size
 
         stale_epochs = 0
         history = []

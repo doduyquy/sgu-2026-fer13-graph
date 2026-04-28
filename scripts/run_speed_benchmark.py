@@ -142,8 +142,8 @@ def main():
             "oom": oom,
             # Will be filled from profile JSON
             "actual_batch_size": configured_bs,
-            "first_train_batch_x_shape": None,
-            "first_train_batch_edge_attr_shape": None,
+            "first_batch_x_shape": None,
+            "first_batch_edge_attr_shape": None,
             "len_train_loader": None,
             "batches_per_epoch": math.ceil(TRAIN_SAMPLES / configured_bs),
             "max_train_batches": max_train_batches_cfg,
@@ -195,27 +195,23 @@ def main():
                 if prof.get(key) is not None:
                     row[key] = prof[key]
 
-            # Shape fields (from trainer first train batch)
-            row["first_train_batch_x_shape"] = str(
-                prof.get("first_train_batch_x_shape") or
-                prof.get("first_batch_x_shape") or ""  # backwards compat
-            )
-            row["first_train_batch_edge_attr_shape"] = str(
-                prof.get("first_train_batch_edge_attr_shape") or
-                prof.get("first_batch_edge_attr_shape") or ""
-            )
+            # Shape fields (stored as lists)
+            row["first_batch_x_shape"] = str(prof.get("first_batch_x_shape", ""))
+            row["first_batch_edge_attr_shape"] = str(prof.get("first_batch_edge_attr_shape", ""))
             row["bs_mismatch"] = bool(prof.get("bs_mismatch", False))
 
             if row["bs_mismatch"]:
                 row["status"] = "FAIL_BS_MISMATCH"
 
-            # Guaranteed est_epoch_min: sec_per_batch * batches_per_epoch / 60
-            # Never left as None or 0.0 when sec/batch is known.
-            spb = row.get("train_sec_per_batch")
-            bpe = row.get("batches_per_epoch")
-            if spb and spb > 0 and bpe and bpe > 0:
-                if not row.get("estimated_train_min_per_epoch"):
-                    row["estimated_train_min_per_epoch"] = spb * bpe / 60.0
+            # Recompute estimated epoch from actual values if still missing or zero
+            spb_val = row.get("train_sec_per_batch")
+            if spb_val is not None and spb_val > 0:
+                bpe = row.get("batches_per_epoch")
+                if bpe and bpe > 0:
+                    computed_est = spb_val * bpe / 60.0
+                    # Override if missing OR if previously computed value is 0.0
+                    if not row.get("estimated_train_min_per_epoch"):
+                        row["estimated_train_min_per_epoch"] = computed_est
 
             # Auto-annotation
             note_parts = []
@@ -232,7 +228,12 @@ def main():
                 if row.get("avg_to_device_time") and row["avg_to_device_time"] / spb > 0.2:
                     note_parts.append("CPU-GPU transfer bottleneck.")
             if row["bs_mismatch"]:
-                note_parts.append("⚠ BS MISMATCH – DataLoader not using configured bs!")
+                note_parts.append("\u26a0 BS MISMATCH – DataLoader not using configured bs!")
+            # Profile truncation warning
+            rec = row.get("profile_batches_recorded")
+            req = row.get("profile_batches_requested")
+            if rec is not None and req is not None and rec < req:
+                note_parts.append(f"Profile truncated: recorded={rec} < requested={req} (max_train_batches too small).")
             row["note"] = " ".join(note_parts)
 
         results.append(row)
@@ -242,7 +243,7 @@ def main():
     # ------------------------------------------------------------------ #
     headers = [
         "scenario_name", "configured_batch_size", "actual_batch_size",
-        "first_train_batch_x_shape", "first_train_batch_edge_attr_shape",
+        "first_batch_x_shape", "first_batch_edge_attr_shape",
         "num_workers", "pin_memory", "persistent_workers", "prefetch_factor",
         "graph_cache_chunks", "amp",
         "len_train_loader", "batches_per_epoch", "max_train_batches",
@@ -266,23 +267,30 @@ def main():
     # ------------------------------------------------------------------ #
     md_lines = [
         "# Speed Benchmark Results\n",
-        "| scenario | actual_bs | first_train_batch_x_shape | sec/batch"
-        " | batches/epoch | est_epoch_min | max_vram_gb | profile_recorded | status |",
+        "| scenario | actual_bs | x_shape | sec/batch | batches/epoch |"
+        " est_epoch_min | max_vram_gb | profile_batches_recorded | status |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
-        x_shape  = r.get("first_train_batch_x_shape") or "-"
-        spb      = r.get("train_sec_per_batch")
-        est      = r.get("estimated_train_min_per_epoch")
-        vram     = r.get("cuda_max_allocated_gb")
+        x_shape = r.get("first_batch_x_shape") or "-"
+        spb = r.get("train_sec_per_batch")
+        est = r.get("estimated_train_min_per_epoch")
+        vram = r.get("cuda_max_allocated_gb")
         recorded = r.get("profile_batches_recorded")
         requested = r.get("profile_batches_requested")
 
-        spb_str  = f"{spb:.3f}s" if spb is not None else "-"
-        est_str  = f"{est:.1f}"  if (est is not None and est > 0) else "-"
+        spb_str = f"{spb:.3f}s" if spb is not None else "-"
+        # Never show 0.0 – recompute from spb if needed
+        if est is None or est == 0.0:
+            bpe = r.get("batches_per_epoch")
+            if spb is not None and spb > 0 and bpe:
+                est = spb * bpe / 60.0
+        est_str = f"{est:.2f}" if (est is not None and est > 0) else "-"
         vram_str = f"{vram:.2f}" if vram is not None else "-"
         if recorded is not None and requested is not None:
             rec_str = f"{recorded}/{requested}"
+            if recorded < requested:
+                rec_str += " ⚠"
         elif recorded is not None:
             rec_str = str(recorded)
         else:
@@ -325,12 +333,21 @@ def main():
         vram = r.get("cuda_max_allocated_gb")
         recorded = r.get("profile_batches_recorded")
         requested = r.get("profile_batches_requested")
+        # Recompute est if missing or zero
+        if (est is None or est == 0.0) and spb and spb > 0:
+            bpe = r.get("batches_per_epoch")
+            if bpe:
+                est = spb * bpe / 60.0
+        est_str = f"{est:>6.1f}m" if (est is not None and est > 0) else f"{'?':>7}"
+        spb_str = f"{spb:>7.3f}s" if spb else f"{'?':>8}"
         rec_str = f"{recorded}/{requested}" if recorded is not None and requested is not None else "-"
+        if recorded is not None and requested is not None and recorded < requested:
+            rec_str += "⚠"
         print(
             f"{r['scenario_name']:<35} {r['actual_batch_size']:>5}"
-            f" {(spb or 0):>7.3f}s {r['batches_per_epoch']:>7}"
-            f" {(est or 0):>6.1f}m {(vram or 0):>5.2f}G"
-            f" {rec_str:>5} {r['status']:<20}"
+            f" {spb_str} {r['batches_per_epoch']:>7}"
+            f" {est_str} {(vram or 0):>5.2f}G"
+            f" {rec_str:>6} {r['status']:<20}"
         )
 
     # ------------------------------------------------------------------ #

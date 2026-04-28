@@ -1,5 +1,10 @@
 # =============================================================================
-# Speed Benchmark v2 – 3 mandatory scenarios
+# Speed Benchmark v3 – 4 mandatory scenarios
+# Fixes:
+#   1. est_epoch_min computed correctly from sec/batch * batches/epoch (no 0.0)
+#   2. first_train_batch_x_shape captured from batch_idx=0 inside train loop
+#   3. bs_mismatch check for ALL configured batch sizes (not just 128)
+#   4. profile_batches_recorded < requested is flagged with ⚠
 # Copy cell này vào Kaggle notebook và chạy sau Cell 1 (clone repo)
 # =============================================================================
 
@@ -8,7 +13,7 @@ from pathlib import Path
 
 # --- Chỉnh nếu cần ---
 REPO_PATH   = Path("/kaggle/working/sgu-2026-facial-expression-recognition")
-OUTPUT_DIR  = "/kaggle/working/fer_d5_outputs/speed_benchmark_v2"
+OUTPUT_DIR  = "/kaggle/working/fer_d5_outputs/speed_benchmark_v3"
 DEVICE      = "cuda:0"
 ENVIRONMENT = "kaggle"
 
@@ -16,7 +21,7 @@ os.chdir(REPO_PATH)
 if str(REPO_PATH) not in sys.path:
     sys.path.insert(0, str(REPO_PATH))
 
-# Chạy 4 scenario bắt buộc: bs16, bs32, bs64, bs64_amp
+# 4 scenarios bắt buộc
 MANDATORY = [
     "d5a_speed_bs16",
     "d5a_speed_bs32",
