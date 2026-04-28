@@ -161,6 +161,9 @@ def main() -> None:
     run_cfg = config.get("run", {})
     mode = args.mode or run_cfg.get("mode", "smoke")
     zip_outputs = bool(args.zip_outputs if args.zip_outputs is not None else run_cfg.get("zip_outputs", False))
+    config["run"] = {**run_cfg, "mode": mode, "zip_outputs": zip_outputs}
+    print(f"resolved run.mode: {mode}")
+    print(f"resolved run.zip_outputs: {zip_outputs}")
     run_mode(config, mode=mode, checkpoint=args.checkpoint, zip_outputs=zip_outputs)
 
 
