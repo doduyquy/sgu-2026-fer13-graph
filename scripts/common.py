@@ -175,6 +175,8 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
         data["batch_size"] = int(args.batch_size)
     if getattr(args, "epochs", None) is not None:
         training["epochs"] = int(args.epochs)
+    if getattr(args, "device", None) is not None:
+        training["device"] = str(args.device)
     for attr in ("max_train_batches", "max_val_batches", "max_test_batches"):
         value = getattr(args, attr, None)
         if value is not None:
@@ -212,24 +214,57 @@ def build_dataloader(
     )
 
 
+def resolve_device(device_arg: str | None = None, config: Optional[Dict[str, Any]] = None) -> torch.device:
+    config = config or {}
+    requested = (
+        device_arg
+        or config.get("training", {}).get("device")
+        or config.get("device")
+        or "auto"
+    )
+    requested = "auto" if requested is None else str(requested).strip()
+    if requested == "" or requested.lower() == "auto":
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    elif requested.lower().startswith("cuda"):
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+        device = torch.device("cuda:0" if requested.lower() == "cuda" else requested)
+    else:
+        device = torch.device(requested)
+
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+    return device
+
+
+def log_device_info(device: torch.device | str) -> None:
+    device = torch.device(device)
+    print(f"--- torch version: {torch.__version__}")
+    print(f"--- cuda available: {torch.cuda.is_available()}")
+    print(f"--- cuda device count: {torch.cuda.device_count()}")
+    print(f"--- selected device: {device}")
+    if torch.cuda.is_available():
+        idx = device.index if device.type == "cuda" and device.index is not None else torch.cuda.current_device()
+        print(f"--- gpu name: {torch.cuda.get_device_name(idx)}")
+        print(f"--- current cuda device: {torch.cuda.current_device()}")
+
+
 def infer_device(config: Dict[str, Any]) -> torch.device:
-    requested = config.get("training", {}).get("device", "auto")
-    if requested == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(requested)
+    return resolve_device(config=config)
 
 
 def prepare_training_objects(config: Dict[str, Any]):
     seed = int(config.get("training", {}).get("seed", 42))
     set_seed(seed)
     device = infer_device(config)
+    log_device_info(device)
     graph_cfg = GraphConfig.from_dict(config.get("graph", {}))
     model_cfg = dict(config.get("model", {}))
     model_cfg.setdefault("height", graph_cfg.height)
     model_cfg.setdefault("width", graph_cfg.width)
     model_cfg.setdefault("connectivity", graph_cfg.connectivity)
-    model = build_model(model_cfg)
-    criterion = D5RetrievalLoss(config.get("loss", {}))
+    model = build_model(model_cfg).to(device)
+    criterion = D5RetrievalLoss(config.get("loss", {})).to(device)
     optimizer = build_optimizer(model, config.get("optimizer", {}))
     scheduler = build_scheduler(optimizer, config.get("scheduler", {}))
     return model, criterion, optimizer, scheduler, device

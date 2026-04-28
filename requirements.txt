@@ -1,4 +1,5 @@
-torch
+# Install PyTorch separately for your platform.
+# Kaggle GPU images already provide CUDA-enabled torch.
 numpy
 pandas
 scikit-learn

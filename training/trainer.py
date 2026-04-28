@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -55,7 +56,7 @@ class D5Trainer:
         grad_clip_norm: Optional[float] = 5.0,
     ) -> None:
         self.model = model.to(device)
-        self.criterion = criterion
+        self.criterion = criterion.to(device)
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.device = torch.device(device)
@@ -67,17 +68,22 @@ class D5Trainer:
         self.grad_clip_norm = grad_clip_norm
         self.best_metric = -float("inf")
         self.best_epoch = -1
+        self._logged_train_device = False
         self.wandb = None
         if self.use_wandb:
             import wandb
 
             self.wandb = wandb
+        first_param = next(self.model.parameters())
+        print(f"trainer device: {self.device}")
+        print(f"model first parameter device: {first_param.device}")
 
     def train_one_epoch(self, loader, epoch: int, max_batches: Optional[int] = None) -> Dict[str, float]:
         self.model.train()
         totals: Dict[str, float] = {}
         count = 0
         pred_count = torch.zeros(7, dtype=torch.long)
+        start_time = time.perf_counter()
         progress = tqdm(loader, desc=f"train {epoch}", leave=False)
         for batch_idx, batch in enumerate(progress):
             if max_batches is not None and batch_idx >= int(max_batches):
@@ -87,6 +93,14 @@ class D5Trainer:
             out = self.model(batch)
             loss_dict = self.criterion(out, batch["y"], batch)
             loss = loss_dict["loss"]
+            if not self._logged_train_device:
+                print(
+                    "train tensor devices: "
+                    f"x={batch['x'].device} edge_index={batch['edge_index'].device} "
+                    f"edge_attr={batch['edge_attr'].device} y={batch['y'].device} "
+                    f"logits={out['logits'].device} loss={loss.device}"
+                )
+                self._logged_train_device = True
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Non-finite training loss at batch {batch_idx}")
             loss.backward()
@@ -94,7 +108,8 @@ class D5Trainer:
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), float(self.grad_clip_norm))
             else:
                 grad_norm = self._compute_grad_norm()
-            if not torch.isfinite(torch.as_tensor(grad_norm)):
+            grad_norm_finite = bool(torch.isfinite(torch.as_tensor(grad_norm)).detach().cpu().item())
+            if not grad_norm_finite:
                 raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
             self.optimizer.step()
 
@@ -109,6 +124,9 @@ class D5Trainer:
 
         metrics = {f"train_{k}": v / max(count, 1) for k, v in totals.items()}
         metrics["train_batches"] = float(count)
+        elapsed = time.perf_counter() - start_time
+        metrics["train_seconds"] = float(elapsed)
+        metrics["train_sec_per_batch"] = float(elapsed / max(count, 1))
         for i, c in enumerate(pred_count.tolist()):
             metrics[f"train_pred_count_{i}"] = float(c)
         return metrics
@@ -121,6 +139,7 @@ class D5Trainer:
         y_pred = []
         count = 0
         pred_count = torch.zeros(7, dtype=torch.long)
+        start_time = time.perf_counter()
         for batch_idx, batch in enumerate(tqdm(loader, desc=prefix, leave=False)):
             if max_batches is not None and batch_idx >= int(max_batches):
                 break
@@ -140,6 +159,9 @@ class D5Trainer:
             count += 1
 
         metrics = {f"{prefix}_{k}": v / max(count, 1) for k, v in totals.items()}
+        elapsed = time.perf_counter() - start_time
+        metrics[f"{prefix}_seconds"] = float(elapsed)
+        metrics[f"{prefix}_sec_per_batch"] = float(elapsed / max(count, 1))
         cls_metrics = compute_metrics(y_true, y_pred) if y_true else {
             "accuracy": 0.0,
             "macro_f1": 0.0,

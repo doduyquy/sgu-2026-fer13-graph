@@ -8,17 +8,20 @@ from pathlib import Path
 
 import torch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+for path in (SCRIPT_DIR, PROJECT_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from common import apply_cli_overrides, build_dataloader, load_config, prepare_training_objects
+from training.trainer import move_to_device
 
 
 def _stats(name: str, value: torch.Tensor) -> None:
     v = value.detach().float()
     print(
-        f"{name:<24} shape={tuple(value.shape)} "
+        f"{name:<24} shape={tuple(value.shape)} device={value.device} "
         f"min={v.min().item():.6f} max={v.max().item():.6f} "
         f"mean={v.mean().item():.6f} std={v.std(unbiased=False).item():.6f}"
     )
@@ -27,14 +30,18 @@ def _stats(name: str, value: torch.Tensor) -> None:
 def run_debug(config) -> None:
     loader = build_dataloader(config, split="train", shuffle=False)
     batch = next(iter(loader))
+    model, criterion, optimizer, _, device = prepare_training_objects(config)
+    model.to(device)
+    criterion.to(device)
+    batch = move_to_device(batch, device)
+    first_param = next(model.parameters())
+    print(f"selected device: {device}")
+    print(f"model first parameter device: {first_param.device}")
     print("Batch")
     for key in ("x", "node_features", "edge_index", "edge_attr", "node_mask", "y", "graph_id"):
         value = batch[key]
         if torch.is_tensor(value):
             _stats(key, value)
-    model, criterion, optimizer, _, device = prepare_training_objects(config)
-    model.to(device)
-    batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
     out = model(batch)
     print("Model output")
     for key in ("logits", "node_attn", "edge_attn", "class_node_gate", "class_edge_gate"):
@@ -49,7 +56,7 @@ def run_debug(config) -> None:
 
     loss_dict = criterion(out, batch["y"], batch)
     for key, value in loss_dict.items():
-        print(f"{key:<24} {float(value.detach().cpu().item()):.6f}")
+        print(f"{key:<24} {float(value.detach().cpu().item()):.6f} device={value.device}")
     loss = loss_dict["loss"]
     assert torch.isfinite(loss)
     optimizer.zero_grad(set_to_none=True)
@@ -65,6 +72,7 @@ def main() -> None:
     parser.add_argument("--config", default="configs/d5a.yaml")
     parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--device", default=None)
     parser.add_argument("--graph_repo_path", default=None)
     parser.add_argument("--csv_root", default=None)
     parser.add_argument("--output_root", default=None)

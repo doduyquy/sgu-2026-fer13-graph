@@ -6,9 +6,11 @@ import argparse
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+for path in (SCRIPT_DIR, PROJECT_ROOT):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from common import (
     apply_cli_overrides,
@@ -60,6 +62,7 @@ def main() -> None:
     parser.add_argument("--environment", "--env", choices=["local", "kaggle"], default=None)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--device", default=None)
     parser.add_argument("--graph_repo_path", default=None)
     parser.add_argument("--csv_root", default=None)
     parser.add_argument("--output_root", default=None)

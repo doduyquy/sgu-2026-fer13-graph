@@ -9,7 +9,7 @@ experiment:
   name: d5a_class_pixel_motif_retrieval
 
 run:
-  mode: build_and_train
+  mode: smoke
   zip_outputs: false
 
 model:
@@ -53,6 +53,7 @@ scheduler:
   min_lr: 0.000001
 
 training:
+  device: auto
   epochs: 80
   monitor: val_macro_f1
   early_stopping_patience: 20
