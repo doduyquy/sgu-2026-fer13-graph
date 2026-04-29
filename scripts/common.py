@@ -212,6 +212,12 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
             training[attr] = int(value)
     if getattr(args, "no_wandb", False):
         logging_cfg["use_wandb"] = False
+    if getattr(args, "wandb", False):
+        logging_cfg["use_wandb"] = True
+    if getattr(args, "wandb_project", None) is not None:
+        logging_cfg["project"] = str(args.wandb_project)
+    if getattr(args, "wandb_entity", None) is not None:
+        logging_cfg["entity"] = str(args.wandb_entity)
 
     # --- DataLoader overrides ---
     if getattr(args, "num_workers", None) is not None:
@@ -384,6 +390,9 @@ def create_trainer(config: Dict[str, Any]) -> D5Trainer:
         output_root=output_root,
         config=config,
         use_wandb=bool(logging_cfg.get("use_wandb", False)),
+        wandb_project=logging_cfg.get("project"),
+        wandb_entity=logging_cfg.get("entity"),
+        wandb_run_name=logging_cfg.get("run_name"),
         grad_clip_norm=training_cfg.get("grad_clip_norm", 5.0),
         amp=bool(training_cfg.get("amp", False)),
         profile_batches=int(training_cfg.get("profile_batches", 0)),

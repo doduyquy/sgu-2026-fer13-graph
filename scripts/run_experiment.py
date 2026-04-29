@@ -155,6 +155,9 @@ def main() -> None:
     parser.add_argument("--max_train_batches", type=int, default=None)
     parser.add_argument("--max_val_batches", type=int, default=None)
     parser.add_argument("--max_test_batches", type=int, default=None)
+    parser.add_argument("--wandb", action="store_true", default=False)
+    parser.add_argument("--wandb_project", default=None)
+    parser.add_argument("--wandb_entity", default=None)
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--zip_outputs", action="store_true", default=None)
     # --- Performance profiling & optimisation ---

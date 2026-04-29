@@ -71,6 +71,9 @@ class D5Trainer:
         output_root: str | Path = "outputs",
         config: Optional[Dict[str, Any]] = None,
         use_wandb: bool = False,
+        wandb_project: Optional[str] = None,
+        wandb_entity: Optional[str] = None,
+        wandb_run_name: Optional[str] = None,
         grad_clip_norm: Optional[float] = 5.0,
         amp: bool = False,
         profile_batches: int = 0,
@@ -93,6 +96,18 @@ class D5Trainer:
         if self.use_wandb:
             import wandb
             self.wandb = wandb
+            run_name = wandb_run_name or f"{self.config.get('run', {}).get('config_name', 'd5a')}_{self.output_root.name}"
+            self.wandb.init(
+                project=wandb_project or "FER-GRAPH",
+                entity=wandb_entity or None,
+                name=run_name,
+                config=self.config,
+                dir=str(self.output_root),
+            )
+            print(
+                f"[W&B] enabled project={wandb_project or 'FER-GRAPH'} "
+                f"entity={wandb_entity or 'default'} run={run_name}"
+            )
 
         # AMP setup
         self.amp_enabled = bool(amp) and self.device.type == "cuda"
@@ -543,6 +558,8 @@ class D5Trainer:
                 print(f"Early stopping after {stale_epochs} stale epochs")
                 break
         self._save_history(history)
+        if self.wandb is not None:
+            self.wandb.finish()
         return {"best_metric": self.best_metric, "best_epoch": self.best_epoch, "history": history}
 
     def save_checkpoint(self, filename: str, epoch: int, metrics: Dict[str, float]) -> Path:

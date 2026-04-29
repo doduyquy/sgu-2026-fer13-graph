@@ -59,6 +59,20 @@ def run_evaluate(config, checkpoint=None):
         eval_dir / "metrics.json",
     )
     report = metrics["classification_report"]
+    dump_json(report, eval_dir / "classification_report.json")
+    report_lines = []
+    for label, values in report.items():
+        if isinstance(values, dict):
+            report_lines.append(
+                f"{label:<14} "
+                f"precision={values.get('precision', 0.0):.4f} "
+                f"recall={values.get('recall', 0.0):.4f} "
+                f"f1={values.get('f1-score', 0.0):.4f} "
+                f"support={values.get('support', 0.0):.0f}"
+            )
+        else:
+            report_lines.append(f"{label:<14} {values:.4f}")
+    (eval_dir / "classification_report.txt").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
     print(
         "\n=======================================================\n"
         "TEST SET EVALUATION\n"
@@ -81,6 +95,7 @@ def run_evaluate(config, checkpoint=None):
         else:
             print(f"{label:<14} {values:.4f}")
     print(f"Confusion matrix saved: {cm_path}")
+    print(f"Classification report saved: {eval_dir / 'classification_report.txt'}")
     print(f"Correct examples saved: {correct_path}")
     print(f"Wrong examples saved: {wrong_path}")
     print(f"Evaluation outputs: {eval_dir}")

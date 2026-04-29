@@ -49,4 +49,5 @@ training:
 
 logging:
   use_wandb: false
-  project: FER2013-D5
+  project: FER-GRAPH
+  entity: phucga15062005
