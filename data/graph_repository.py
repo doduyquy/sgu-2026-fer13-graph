@@ -194,7 +194,8 @@ class ChunkedGraphDataset(Dataset):
         repo_root: str | Path,
         split: str,
         resolve: bool = False,
-        graph_cache_chunks: int = 1,
+        chunk_cache_size: int = 0,
+        graph_cache_chunks: Optional[int] = None,
     ) -> None:
         self.repo_root = Path(repo_root)
         self.split = split
@@ -205,7 +206,9 @@ class ChunkedGraphDataset(Dataset):
             raise FileNotFoundError(f"No chunks found for split={split} in {self.repo_root}")
         self.shared = self.reader.load_shared()
         self.resolver = GraphResolver(self.shared)
-        self.graph_cache_chunks = max(1, int(graph_cache_chunks))
+        if graph_cache_chunks is not None and int(chunk_cache_size or 0) <= 0:
+            chunk_cache_size = graph_cache_chunks
+        self.chunk_cache_size = max(0, int(chunk_cache_size or 0))
         self._cache: OrderedDict[int, List[PixelGraphSample]] = OrderedDict()
         self._index = self._build_index()
 
@@ -223,14 +226,21 @@ class ChunkedGraphDataset(Dataset):
     def __len__(self) -> int:
         return len(self._index)
 
+    def chunk_index_groups(self) -> List[List[int]]:
+        groups: List[List[int]] = [[] for _ in self.chunk_paths]
+        for sample_idx, (chunk_idx, _) in enumerate(self._index):
+            groups[int(chunk_idx)].append(sample_idx)
+        return groups
+
     def _get_chunk(self, chunk_idx: int) -> List[PixelGraphSample]:
+        if self.chunk_cache_size <= 0:
+            return torch_load(self.chunk_paths[chunk_idx])
         if chunk_idx in self._cache:
-            chunk = self._cache.pop(chunk_idx)
-            self._cache[chunk_idx] = chunk
-            return chunk
+            self._cache.move_to_end(chunk_idx)
+            return self._cache[chunk_idx]
         chunk = torch_load(self.chunk_paths[chunk_idx])
         self._cache[chunk_idx] = chunk
-        while len(self._cache) > self.graph_cache_chunks:
+        while len(self._cache) > self.chunk_cache_size:
             self._cache.popitem(last=False)
         return chunk
 

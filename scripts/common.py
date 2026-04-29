@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
-from data.full_graph_dataset import FullGraphDataset, collate_fn_full_graph
+from data.full_graph_dataset import ChunkAwareBatchSampler, FullGraphDataset, collate_fn_full_graph
 from data.graph_config import GraphConfig
 from models.registry import build_model
 from training.losses import D5RetrievalLoss
@@ -202,8 +202,16 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
             data["persistent_workers"] = bool(_pw)
     if getattr(args, "prefetch_factor", None) is not None:
         data["prefetch_factor"] = int(args.prefetch_factor)
-    if getattr(args, "graph_cache_chunks", None) is not None:
-        data["graph_cache_chunks"] = int(args.graph_cache_chunks)
+    if getattr(args, "chunk_cache_size", None) is not None:
+        data["chunk_cache_size"] = int(args.chunk_cache_size)
+        data.pop("graph_cache_chunks", None)
+    elif getattr(args, "graph_cache_chunks", None) is not None:
+        data["chunk_cache_size"] = int(args.graph_cache_chunks)
+        data.pop("graph_cache_chunks", None)
+    if getattr(args, "chunk_aware_shuffle", False):
+        data["chunk_aware_shuffle"] = True
+    if getattr(args, "no_chunk_aware_shuffle", False):
+        data["chunk_aware_shuffle"] = False
 
     # --- Training performance overrides ---
     if getattr(args, "profile_batches", None) is not None:
@@ -229,33 +237,46 @@ def build_dataloader(
     paths = config.get("paths", {})
     data_cfg = config.get("data", {})
     repo = resolve_path(paths.get("graph_repo_path", "artifacts/graph_repo"))
+    chunk_cache_size = int(data_cfg.get("chunk_cache_size", data_cfg.get("graph_cache_chunks", 0)) or 0)
     dataset = FullGraphDataset(
         repo_root=repo,
         split=split,
-        graph_cache_chunks=int(data_cfg.get("graph_cache_chunks", 1)),
+        chunk_cache_size=chunk_cache_size,
     )
     num_workers = int(data_cfg.get("num_workers", 0))
-    pin_memory = bool(data_cfg.get("pin_memory", True))
+    pin_memory = bool(data_cfg.get("pin_memory", False))
     persistent_workers_cfg = bool(data_cfg.get("persistent_workers", False))
     persistent_workers = persistent_workers_cfg and num_workers > 0
     if persistent_workers_cfg and num_workers == 0:
         print("[DataLoader] WARNING: persistent_workers=True ignored because num_workers=0")
     prefetch_factor_cfg = data_cfg.get("prefetch_factor", None)
     prefetch_factor = int(prefetch_factor_cfg) if (prefetch_factor_cfg is not None and num_workers > 0) else None
+    batch_size = int(data_cfg.get("batch_size", 16))
+    chunk_aware_shuffle = bool(data_cfg.get("chunk_aware_shuffle", False))
+    use_chunk_aware_sampler = bool(split == "train" and shuffle and chunk_aware_shuffle)
     loader_kwargs: Dict[str, Any] = dict(
-        batch_size=int(data_cfg.get("batch_size", 16)),
-        shuffle=bool(shuffle),
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
         collate_fn=collate_fn_full_graph,
     )
+    if use_chunk_aware_sampler:
+        loader_kwargs["batch_sampler"] = ChunkAwareBatchSampler(
+            dataset=dataset,
+            batch_size=batch_size,
+            shuffle_chunks=True,
+            shuffle_within_chunk=True,
+        )
+    else:
+        loader_kwargs["batch_size"] = batch_size
+        loader_kwargs["shuffle"] = bool(shuffle)
     if prefetch_factor is not None:
         loader_kwargs["prefetch_factor"] = prefetch_factor
     print(
-        f"[DataLoader split={split}] batch_size={loader_kwargs['batch_size']} "
+        f"[DataLoader split={split}] batch_size={batch_size} "
         f"num_workers={num_workers} pin_memory={pin_memory} "
-        f"persistent_workers={persistent_workers} prefetch_factor={prefetch_factor}"
+        f"persistent_workers={persistent_workers} prefetch_factor={prefetch_factor} "
+        f"chunk_aware_shuffle={use_chunk_aware_sampler}"
     )
     return DataLoader(dataset, **loader_kwargs)
 

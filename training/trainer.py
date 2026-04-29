@@ -452,12 +452,18 @@ class D5Trainer:
         import math
         dataset_size = getattr(train_loader.dataset, "__len__", lambda: None)()
         batch_size = getattr(train_loader, "batch_size", None)
+        batch_sampler = getattr(train_loader, "batch_sampler", None)
+        if batch_size is None and batch_sampler is not None:
+            batch_size = getattr(batch_sampler, "batch_size", None)
         # Set configured_bs for bs_mismatch validation in train_one_epoch
         self._configured_bs = int(batch_size) if batch_size is not None else None
         # full_epoch_batches: used for estimated epoch time (NOT capped by max_train_batches).
         # total_train_batches: passed to train_one_epoch as the effective batches this run.
         if dataset_size is not None and batch_size is not None and batch_size > 0:
-            full_epoch_batches = math.ceil(dataset_size / batch_size)
+            try:
+                full_epoch_batches = int(len(train_loader))
+            except TypeError:
+                full_epoch_batches = math.ceil(dataset_size / batch_size)
             total_train_batches = (
                 min(full_epoch_batches, int(max_train_batches))
                 if max_train_batches is not None

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
+import random
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 from data.graph_repository import ChunkedGraphDataset
 from data.graph_types import ResolvedPixelGraph
@@ -19,17 +21,37 @@ class FullGraphDataset(Dataset):
         self,
         repo_root: str | Path,
         split: str,
-        graph_cache_chunks: int = 1,
+        chunk_cache_size: int = 0,
+        graph_cache_chunks: int | None = None,
     ) -> None:
         self.dataset = ChunkedGraphDataset(
             repo_root=repo_root,
             split=split,
             resolve=True,
+            chunk_cache_size=chunk_cache_size,
             graph_cache_chunks=graph_cache_chunks,
         )
+        print(
+            f"[FullGraphDataset {split}]\n"
+            f"chunk_cache_size={self.dataset.chunk_cache_size}\n"
+            f"num_chunks={len(self.dataset.chunk_paths)}\n"
+            f"num_samples={len(self.dataset)}"
+        )
+        if self.dataset.chunk_cache_size > 0:
+            print(
+                f"[FullGraphDataset {split}] chunk cache enabled "
+                f"(max_chunks={self.dataset.chunk_cache_size})"
+            )
 
     def __len__(self) -> int:
         return len(self.dataset)
+
+    @property
+    def num_chunks(self) -> int:
+        return len(self.dataset.chunk_paths)
+
+    def chunk_index_groups(self) -> List[List[int]]:
+        return self.dataset.chunk_index_groups()
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         graph = self.dataset[int(idx)]
@@ -46,6 +68,53 @@ class FullGraphDataset(Dataset):
             "y": torch.tensor(int(graph.label), dtype=torch.long),
             "label": torch.tensor(int(graph.label), dtype=torch.long),
         }
+
+
+class ChunkAwareBatchSampler(Sampler[List[int]]):
+    """Yield batches that stay within one graph-repo chunk when possible."""
+
+    def __init__(
+        self,
+        dataset: FullGraphDataset,
+        batch_size: int,
+        shuffle_chunks: bool = True,
+        shuffle_within_chunk: bool = True,
+    ) -> None:
+        self.chunk_indices = dataset.chunk_index_groups()
+        self.batch_size = int(batch_size)
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {batch_size}")
+        self.shuffle_chunks = bool(shuffle_chunks)
+        self.shuffle_within_chunk = bool(shuffle_within_chunk)
+        self.batches_per_epoch = sum(
+            math.ceil(len(indices) / self.batch_size)
+            for indices in self.chunk_indices
+            if indices
+        )
+        print(
+            "[ChunkAwareSampler] enabled=True\n"
+            f"num_chunks={len(self.chunk_indices)}\n"
+            f"batch_size={self.batch_size}\n"
+            f"batches_per_epoch={self.batches_per_epoch}\n"
+            f"shuffle_chunks={self.shuffle_chunks}\n"
+            f"shuffle_within_chunk={self.shuffle_within_chunk}"
+        )
+
+    def __iter__(self) -> Iterator[List[int]]:
+        chunk_order = list(range(len(self.chunk_indices)))
+        if self.shuffle_chunks:
+            random.shuffle(chunk_order)
+        for chunk_idx in chunk_order:
+            indices = list(self.chunk_indices[chunk_idx])
+            if not indices:
+                continue
+            if self.shuffle_within_chunk:
+                random.shuffle(indices)
+            for start in range(0, len(indices), self.batch_size):
+                yield indices[start : start + self.batch_size]
+
+    def __len__(self) -> int:
+        return self.batches_per_epoch
 
 
 def collate_fn_full_graph(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:

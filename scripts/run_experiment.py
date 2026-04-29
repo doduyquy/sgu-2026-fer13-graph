@@ -167,7 +167,13 @@ def main() -> None:
     parser.add_argument("--prefetch_factor", type=int, default=None,
                         help="DataLoader prefetch_factor (requires num_workers>0).")
     parser.add_argument("--graph_cache_chunks", type=int, default=None,
-                        help="Number of graph cache chunks to keep in memory.")
+                        help="Deprecated alias for --chunk_cache_size.")
+    parser.add_argument("--chunk_cache_size", type=int, default=None,
+                        help="Maximum graph repo chunks to keep in RAM (0 disables cache).")
+    parser.add_argument("--chunk_aware_shuffle", action="store_true", default=False,
+                        help="Use chunk-aware train batches so graph repo chunk cache can hit.")
+    parser.add_argument("--no_chunk_aware_shuffle", action="store_true", default=False,
+                        help="Disable chunk-aware train batches.")
     parser.add_argument("--amp", action="store_true", default=False,
                         help="Enable Automatic Mixed Precision (AMP) training.")
     parser.add_argument("--no_amp", action="store_true", default=False,

@@ -12,6 +12,10 @@ run:
   mode: smoke
   zip_outputs: false
 
+data:
+  chunk_cache_size: 0
+  chunk_aware_shuffle: false
+
 model:
   name: class_pixel_motif_graph_retrieval
   num_classes: 7

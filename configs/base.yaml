@@ -24,8 +24,9 @@ data:
   dataset: fer2013
   batch_size: 16
   num_workers: 0
-  pin_memory: true
-  graph_cache_chunks: 1
+  pin_memory: false
+  chunk_cache_size: 0
+  chunk_aware_shuffle: false
 
 graph:
   height: 48
