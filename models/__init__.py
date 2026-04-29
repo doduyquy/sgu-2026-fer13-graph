@@ -8,6 +8,7 @@ if str(_PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_PARENT))
 
 from models.class_pixel_motif_graph_retrieval import ClassPixelMotifGraphRetrieval
+from models.fixed_motif_classifier import FixedMotifMLPClassifier
 from models.registry import build_model
 
-__all__ = ["ClassPixelMotifGraphRetrieval", "build_model"]
+__all__ = ["ClassPixelMotifGraphRetrieval", "FixedMotifMLPClassifier", "build_model"]

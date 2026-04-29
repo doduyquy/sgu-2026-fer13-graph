@@ -38,6 +38,37 @@ class WeightedCrossEntropy(nn.Module):
         return F.cross_entropy(logits, y.long(), weight=weight)
 
 
+class FixedMotifClassificationLoss(nn.Module):
+    """Cross-entropy loss for the D5B fixed motif classifier."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        super().__init__()
+        cfg = dict(config)
+        class_weights = None
+        if cfg.get("use_class_weights", True):
+            counts = cfg.get("class_counts")
+            if counts is None:
+                raise ValueError("loss.use_class_weights=true requires loss.class_counts")
+            class_weights = compute_class_weights(
+                counts,
+                normalize_mean=True,
+                power=float(cfg.get("class_weight_power", 1.0)),
+            )
+        self.ce = WeightedCrossEntropy(class_weights)
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        loss_cls = self.ce(model_out["logits"], y.long())
+        return {
+            "loss": loss_cls,
+            "loss_cls": loss_cls,
+        }
+
+
 class D5RetrievalLoss(nn.Module):
     """CE plus soft-subgraph regularizers for D5A retrieval."""
 

@@ -9,7 +9,8 @@ dataset
 *.pt
 artifacts/
 outputs/
-
+output/
+output_smoke/
 # WandB
 wandb/
 
