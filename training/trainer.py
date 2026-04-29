@@ -105,6 +105,7 @@ class D5Trainer:
         self.profile_batches = int(profile_batches)
         # configured_bs for bs_mismatch validation (set by fit() before training)
         self._configured_bs: Optional[int] = None
+        self._skipped_nonfinite_grad_batches = 0
 
         first_param = next(self.model.parameters())
         print(f"trainer device: {self.device}")
@@ -321,10 +322,25 @@ class D5Trainer:
                 torch.isfinite(torch.as_tensor(grad_norm)).detach().cpu().item()
             )
             if not grad_norm_finite:
-                raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
-
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+                if not self.amp_enabled:
+                    raise FloatingPointError(f"Non-finite grad norm at batch {batch_idx}")
+                self._skipped_nonfinite_grad_batches += 1
+                totals["skipped_nonfinite_grad_batches"] = (
+                    totals.get("skipped_nonfinite_grad_batches", 0.0) + 1.0
+                )
+                old_scale = self.scaler.get_scale()
+                new_scale = old_scale * self.scaler.get_backoff_factor()
+                self.scaler.update(new_scale=new_scale)
+                new_scale = self.scaler.get_scale()
+                self.optimizer.zero_grad(set_to_none=True)
+                grad_norm = torch.zeros((), device=self.device)
+                print(
+                    f"[AMP] skipped optimizer step at epoch={epoch} batch={batch_idx} "
+                    f"due to non-finite grad norm; scale {old_scale:.1f}->{new_scale:.1f}"
+                )
+            else:
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
             if do_profile:
                 _sync(self.device)
                 optimizer_time = time.perf_counter() - t0
