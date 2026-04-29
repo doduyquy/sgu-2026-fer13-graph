@@ -214,7 +214,7 @@ def main() -> None:
     parser.add_argument("--prepare_method", choices=["build", "copy", "auto"], default="auto")
     parser.add_argument("--skip_prepare", action="store_true")
     parser.add_argument("--force_prepare", "--force", dest="force_prepare", action="store_true")
-    parser.add_argument("--output_dir", default="/kaggle/working/fer_d5_outputs/io_benchmark")
+    parser.add_argument("--output_dir", default="/kaggle/working/outputs/io_benchmark")
     parser.add_argument("--no_wandb", action="store_true")
     args = parser.parse_args()
 

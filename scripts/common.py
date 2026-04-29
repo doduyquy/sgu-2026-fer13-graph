@@ -7,6 +7,7 @@ import json
 import os
 import random
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -43,7 +44,11 @@ def deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 def load_config(config_path: str | Path, environment: str | None = None) -> Dict[str, Any]:
     path = resolve_existing_path(config_path)
     cfg = _load_config_tree(path)
-    return resolve_environment_config(cfg, environment=environment)
+    cfg = resolve_environment_config(cfg, environment=environment)
+    run_cfg = dict(cfg.get("run", {}))
+    run_cfg.setdefault("config_name", path.stem)
+    cfg["run"] = run_cfg
+    return cfg
 
 
 def _load_config_tree(config_path: str | Path, seen: Optional[set[Path]] = None) -> Dict[str, Any]:
@@ -89,6 +94,30 @@ def save_config(config: Dict[str, Any], output_root: str | Path) -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     with (output_root / "resolved_config.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(config, f, sort_keys=False)
+
+
+def make_run_output_root(config: Dict[str, Any]) -> Path:
+    paths = config.get("paths", {})
+    run_cfg = config.get("run", {})
+    base = resolve_path(paths.get("output_root", "outputs"))
+    config_name = str(run_cfg.get("config_name") or "run").replace("\\", "_").replace("/", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    root = Path(base) / config_name / timestamp
+    suffix = 2
+    while root.exists():
+        root = Path(base) / config_name / f"{timestamp}_{suffix:02d}"
+        suffix += 1
+    return root
+
+
+def output_root_from_checkpoint(checkpoint_path: str | Path) -> Optional[Path]:
+    path = Path(checkpoint_path)
+    parts = path.parts
+    if "checkpoints" in parts:
+        return path.parents[len(parts) - 1 - parts.index("checkpoints")]
+    if path.parent.name == "checkpoints":
+        return path.parent.parent
+    return None
 
 
 def resolve_existing_path(path_like: str | Path) -> Path:
@@ -342,8 +371,10 @@ def create_trainer(config: Dict[str, Any]) -> D5Trainer:
     paths = config.get("paths", {})
     logging_cfg = config.get("logging", {})
     training_cfg = config.get("training", {})
-    output_root = resolve_path(paths.get("output_root", "outputs"))
+    output_root = resolve_path(paths.get("resolved_output_root")) or make_run_output_root(config)
+    config.setdefault("paths", {})["resolved_output_root"] = str(output_root)
     save_config(config, output_root)
+    print(f"[Output] run_dir={output_root}")
     return D5Trainer(
         model=model,
         criterion=criterion,

@@ -184,6 +184,8 @@ class D5Trainer:
         totals: Dict[str, float] = {}
         count = 0
         pred_count = torch.zeros(7, dtype=torch.long)
+        y_true = []
+        y_pred = []
         epoch_start = time.perf_counter()
         progress = tqdm(loader, desc=f"train {epoch}", leave=False)
 
@@ -382,6 +384,8 @@ class D5Trainer:
 
             pred = out["logits"].detach().argmax(dim=1).cpu()
             pred_count += torch.bincount(pred, minlength=7)
+            y_pred.extend(pred.tolist())
+            y_true.extend(batch["y"].detach().cpu().tolist())
             for key, value in loss_dict.items():
                 totals[key] = totals.get(key, 0.0) + _to_float(value)
             totals["grad_norm"] = totals.get("grad_norm", 0.0) + _to_float(grad_norm)
@@ -404,6 +408,8 @@ class D5Trainer:
             )
 
         metrics = {f"train_{k}": v / max(count, 1) for k, v in totals.items()}
+        if y_true:
+            metrics.update({f"train_{k}": float(v) for k, v in compute_metrics(y_true, y_pred).items()})
         metrics["train_batches"] = float(count)
         elapsed = time.perf_counter() - epoch_start
         metrics["train_seconds"] = float(elapsed)
@@ -515,11 +521,24 @@ class D5Trainer:
             history.append(metrics)
             self._log_metrics(metrics)
             print(
-                f"epoch={epoch:03d} train_loss={metrics.get('train_loss', 0.0):.4f} "
-                f"val_macro_f1={metrics.get('val_macro_f1', 0.0):.4f} "
+                f"Epoch {epoch:03d}/{int(epochs):03d} | "
+                f"loss={metrics.get('train_loss', 0.0):.4f} "
+                f"acc={metrics.get('train_accuracy', 0.0):.4f} "
+                f"macro_f1={metrics.get('train_macro_f1', 0.0):.4f} | "
+                f"val_loss={metrics.get('val_loss', 0.0):.4f} "
+                f"val_acc={metrics.get('val_accuracy', 0.0):.4f} "
+                f"val_macro_f1={metrics.get('val_macro_f1', 0.0):.4f} | "
                 f"best={self.best_metric:.4f} "
-                f"train_sec/batch={metrics.get('train_sec_per_batch', 0.0):.3f}s"
+                f"sec/batch={metrics.get('train_sec_per_batch', 0.0):.3f}s"
             )
+            print(
+                "          val pred_count: "
+                f"{[int(metrics.get(f'val_pred_count_{i}', 0.0)) for i in range(7)]}"
+            )
+            if improved:
+                print(f"          improvement: best_epoch={self.best_epoch}")
+            else:
+                print(f"          no improvement: {stale_epochs}/{int(early_stopping_patience)}")
             if stale_epochs >= int(early_stopping_patience):
                 print(f"Early stopping after {stale_epochs} stale epochs")
                 break

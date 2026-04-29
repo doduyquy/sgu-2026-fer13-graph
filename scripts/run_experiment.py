@@ -74,7 +74,8 @@ def _smoke_sample_count(config) -> int:
 
 
 def _zip_outputs(config) -> Path:
-    output_root = resolve_path(config.get("paths", {}).get("output_root", "outputs"))
+    paths = config.get("paths", {})
+    output_root = resolve_path(paths.get("resolved_output_root") or paths.get("output_root", "outputs"))
     zip_path = output_root.parent / f"{output_root.name}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         if output_root.exists():
@@ -118,7 +119,8 @@ def run_mode(config, mode: str, checkpoint=None, zip_outputs: bool = False):
         raise ValueError(f"Unknown mode: {mode}")
 
     if mode == "build_and_train":
-        ckpt = checkpoint or resolve_path(config.get("paths", {}).get("output_root", "outputs")) / "checkpoints" / "best.pth"
+        paths = config.get("paths", {})
+        ckpt = checkpoint or resolve_path(paths.get("resolved_output_root") or paths.get("output_root", "outputs")) / "checkpoints" / "best.pth"
         if ckpt.exists():
             run_visualize(config, checkpoint=ckpt)
     if zip_outputs:

@@ -12,13 +12,13 @@ environments:
       csv_root: data
       artifact_root: artifacts
       graph_repo_path: artifacts/graph_repo_local
-      output_root: outputs_local
+      output_root: outputs
   kaggle:
     paths:
       csv_root: auto
       artifact_root: /kaggle/working/artifacts
       graph_repo_path: /kaggle/working/artifacts/graph_repo
-      output_root: /kaggle/working/fer_d5_outputs
+      output_root: /kaggle/working/outputs
 
 data:
   dataset: fer2013

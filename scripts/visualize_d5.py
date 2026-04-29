@@ -17,6 +17,7 @@ from common import (
     build_dataloader,
     load_checkpoint_model,
     load_config,
+    output_root_from_checkpoint,
     resolve_path,
 )
 
@@ -28,7 +29,10 @@ from visualization.visualize_d5_motifs import (
 
 def run_visualize(config, checkpoint=None, split: str = "test", max_samples: int = 16):
     paths = config.get("paths", {})
-    output_root = resolve_path(paths.get("output_root", "outputs"))
+    if checkpoint is not None:
+        output_root = output_root_from_checkpoint(checkpoint) or resolve_path(paths.get("resolved_output_root") or paths.get("output_root", "outputs"))
+    else:
+        output_root = resolve_path(paths.get("resolved_output_root") or paths.get("output_root", "outputs"))
     checkpoint = checkpoint or output_root / "checkpoints" / "best.pth"
     model, device, _ = load_checkpoint_model(config, checkpoint)
     loader = build_dataloader(config, split=split, shuffle=False)

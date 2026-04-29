@@ -1,9 +1,9 @@
-environment: local
+environment: kaggle
 paths:
-  csv_root: data
-  artifact_root: artifacts
-  graph_repo_path: artifacts/graph_repo_local
-  output_root: outputs_device_smoke
+  csv_root: /kaggle/input/datasets/doduyquynii/fer13-split/fer13-split
+  artifact_root: /kaggle/working/artifacts
+  graph_repo_path: /kaggle/input/datasets/irthn1311/graph-repo/graph_repo
+  output_root: /kaggle/working/fer_d5_outputs
 environments:
   local:
     paths:
@@ -19,10 +19,13 @@ environments:
       output_root: /kaggle/working/fer_d5_outputs
 data:
   dataset: fer2013
-  batch_size: 2
+  batch_size: 32
   num_workers: 0
-  pin_memory: true
-  graph_cache_chunks: 1
+  pin_memory: false
+  chunk_cache_size: 8
+  chunk_aware_shuffle: true
+  persistent_workers: false
+  prefetch_factor: null
 graph:
   height: 48
   width: 48
@@ -31,23 +34,25 @@ graph:
   chunk_size: 500
   intensity_similarity_alpha: 1.0
 training:
-  epochs: 2
+  epochs: 80
   seed: 42
-  device: auto
+  device: cuda:0
   monitor: val_macro_f1
   early_stopping_patience: 20
   grad_clip_norm: 5.0
-  max_train_batches: 1
-  max_val_batches: 1
-  max_test_batches: 1
+  max_train_batches: null
+  max_val_batches: null
+  max_test_batches: null
+  amp: true
+  profile_batches: 0
 logging:
   use_wandb: false
   project: FER2013-D5
 experiment:
   name: d5a_class_pixel_motif_retrieval
 run:
-  mode: smoke
-  zip_outputs: false
+  mode: train
+  zip_outputs: true
 model:
   name: class_pixel_motif_graph_retrieval
   num_classes: 7
