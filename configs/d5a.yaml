@@ -13,8 +13,13 @@ run:
   zip_outputs: false
 
 data:
-  chunk_cache_size: 0
-  chunk_aware_shuffle: false
+  batch_size: 32
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  prefetch_factor: null
+  chunk_cache_size: 8
+  chunk_aware_shuffle: true
 
 model:
   name: class_pixel_motif_graph_retrieval
@@ -66,5 +71,5 @@ training:
   max_val_batches: null
   max_test_batches: null
   # --- Performance ---
-  amp: false            # set true to enable AMP on CUDA
+  amp: true             # set true to enable AMP on CUDA
   profile_batches: 0   # set > 0 to profile first N batches
