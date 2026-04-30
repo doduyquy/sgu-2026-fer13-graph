@@ -81,8 +81,12 @@ class D5RetrievalLoss(nn.Module):
         self.lambda_closure = float(cfg.get("lambda_closure", 0.01))
         self.lambda_area = float(cfg.get("lambda_area", 0.01))
         self.lambda_div = float(cfg.get("lambda_div", 0.0))
+        self.lambda_prior = float(cfg.get("lambda_prior", 0.0))
+        self.prior_loss_type = str(cfg.get("prior_loss_type", "mse")).lower()
         self.margin = float(cfg.get("margin", 0.2))
         self.target_area = float(cfg.get("target_area", 0.15))
+        if self.prior_loss_type != "mse":
+            raise ValueError(f"Unsupported prior_loss_type: {self.prior_loss_type}")
 
         class_weights = None
         if cfg.get("use_class_weights", True):
@@ -114,6 +118,7 @@ class D5RetrievalLoss(nn.Module):
         loss_closure = self._closure_loss(node_attn, edge_attn, edge_index, y)
         loss_area = self._area_loss(node_attn)
         loss_div = self._diversity_loss(model_out)
+        loss_prior = self._prior_loss(model_out)
 
         total = (
             self.lambda_cls * loss_cls
@@ -122,6 +127,7 @@ class D5RetrievalLoss(nn.Module):
             + self.lambda_closure * loss_closure
             + self.lambda_area * loss_area
             + self.lambda_div * loss_div
+            + self.lambda_prior * loss_prior
         )
         return {
             "loss": total,
@@ -131,6 +137,7 @@ class D5RetrievalLoss(nn.Module):
             "loss_closure": loss_closure,
             "loss_area": loss_area,
             "loss_div": loss_div,
+            "loss_prior": loss_prior,
         }
 
     def _contrast_loss(self, logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
@@ -182,3 +189,18 @@ class D5RetrievalLoss(nn.Module):
         sim = flat @ flat.t()
         mask = ~torch.eye(sim.shape[0], dtype=torch.bool, device=sim.device)
         return sim[mask].pow(2).mean()
+
+    def _prior_loss(self, model_out: Dict[str, torch.Tensor]) -> torch.Tensor:
+        logits = model_out["logits"]
+        if self.lambda_prior <= 0.0:
+            return torch.zeros((), device=logits.device, dtype=logits.dtype)
+        gate = model_out.get("class_node_gate")
+        prior = model_out.get("motif_node_prior")
+        if gate is None:
+            raise KeyError("lambda_prior > 0 requires model_out['class_node_gate']")
+        if prior is None:
+            raise KeyError("lambda_prior > 0 requires a loaded motif_node_prior")
+        prior = prior.to(device=gate.device, dtype=gate.dtype)
+        if tuple(prior.shape) != tuple(gate.shape):
+            raise ValueError(f"Prior shape {tuple(prior.shape)} does not match gate shape {tuple(gate.shape)}")
+        return F.mse_loss(gate, prior)

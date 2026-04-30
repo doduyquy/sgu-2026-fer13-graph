@@ -23,6 +23,7 @@ from common import (
 
 from visualization.visualize_d5_motifs import (
     save_class_gate_heatmaps,
+    save_prior_vs_final_gate_grid,
     save_sample_attention_maps,
 )
 
@@ -38,10 +39,12 @@ def run_visualize(config, checkpoint=None, split: str = "test", max_samples: int
     loader = build_dataloader(config, split=split, shuffle=False)
     gate_dir = output_root / "figures" / "d5a_class_gates"
     attn_dir = output_root / "figures" / "d5a_attention"
+    prior_compare_dir = output_root / "figures" / "prior_vs_final_gate"
     graph_cfg = config.get("graph", {})
     height = int(graph_cfg.get("height", 48))
     width = int(graph_cfg.get("width", 48))
     save_class_gate_heatmaps(model, gate_dir, height=height, width=width)
+    save_prior_vs_final_gate_grid(model, prior_compare_dir, height=height, width=width)
     save_sample_attention_maps(
         model=model,
         loader=loader,
@@ -54,6 +57,7 @@ def run_visualize(config, checkpoint=None, split: str = "test", max_samples: int
     )
     print(f"Class gates: {gate_dir}")
     print(f"Attention maps: {attn_dir}")
+    print(f"Prior vs final gate: {prior_compare_dir}")
 
 
 def main() -> None:

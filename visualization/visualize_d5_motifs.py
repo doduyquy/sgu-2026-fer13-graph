@@ -40,6 +40,61 @@ def save_class_gate_heatmaps(
         plt.close(fig)
 
 
+def save_prior_vs_final_gate_grid(
+    model: torch.nn.Module,
+    out_dir: str | Path,
+    height: int = 48,
+    width: int = 48,
+) -> None:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prior = getattr(model, "motif_node_prior", None)
+    if prior is None:
+        print("[visualize] No motif_node_prior buffer found; skip prior_vs_final_gate.")
+        return
+    model.eval()
+    with torch.no_grad():
+        prior = torch.as_tensor(prior).detach().cpu().float()
+        gate = torch.sigmoid(model.class_node_gate_logits).detach().cpu().float()
+    if tuple(prior.shape) != tuple(gate.shape):
+        print(f"[visualize] Prior shape {tuple(prior.shape)} != gate shape {tuple(gate.shape)}; skip comparison.")
+        return
+
+    for c in range(NUM_CLASSES):
+        diff = gate[c] - prior[c]
+        max_abs = float(diff.abs().max().clamp_min(1e-6).item())
+        fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.4))
+        axes[0].imshow(node_map(prior[c], height, width), cmap="magma", vmin=0.0, vmax=1.0)
+        axes[0].set_title(f"{c} {EMOTION_NAMES[c]} prior")
+        axes[1].imshow(node_map(gate[c], height, width), cmap="magma", vmin=0.0, vmax=1.0)
+        axes[1].set_title("final gate")
+        im = axes[2].imshow(node_map(diff, height, width), cmap="coolwarm", vmin=-max_abs, vmax=max_abs)
+        axes[2].set_title("final - prior")
+        for ax in axes:
+            ax.axis("off")
+        fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+        fig.tight_layout()
+        fig.savefig(out_dir / f"class_{c}_{EMOTION_NAMES[c].lower()}_prior_vs_final_gate.png", dpi=160)
+        plt.close(fig)
+
+    fig, axes = plt.subplots(NUM_CLASSES, 3, figsize=(9.0, NUM_CLASSES * 2.3))
+    for c in range(NUM_CLASSES):
+        diff = gate[c] - prior[c]
+        max_abs = float(diff.abs().max().clamp_min(1e-6).item())
+        row = axes[c]
+        row[0].imshow(node_map(prior[c], height, width), cmap="magma", vmin=0.0, vmax=1.0)
+        row[0].set_title(f"{EMOTION_NAMES[c]} prior", fontsize=9)
+        row[1].imshow(node_map(gate[c], height, width), cmap="magma", vmin=0.0, vmax=1.0)
+        row[1].set_title("final", fontsize=9)
+        row[2].imshow(node_map(diff, height, width), cmap="coolwarm", vmin=-max_abs, vmax=max_abs)
+        row[2].set_title("diff", fontsize=9)
+        for ax in row:
+            ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(out_dir / "prior_vs_final_gate_grid.png", dpi=180)
+    plt.close(fig)
+
+
 def save_attention_grid(
     image,
     node_attn,
