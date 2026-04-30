@@ -76,6 +76,7 @@ class D5Trainer:
         wandb_run_name: Optional[str] = None,
         grad_clip_norm: Optional[float] = 5.0,
         amp: bool = False,
+        amp_init_scale: float = 65536.0,
         profile_batches: int = 0,
     ) -> None:
         self.model = model.to(device)
@@ -113,8 +114,11 @@ class D5Trainer:
         self.amp_enabled = bool(amp) and self.device.type == "cuda"
         if bool(amp) and self.device.type != "cuda":
             print("[AMP] WARNING: AMP requested but device is not CUDA – AMP disabled.")
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.amp_enabled)
-        print(f"[AMP] amp_enabled={self.amp_enabled}")
+        self.scaler = torch.cuda.amp.GradScaler(
+            enabled=self.amp_enabled,
+            init_scale=float(amp_init_scale),
+        )
+        print(f"[AMP] amp_enabled={self.amp_enabled} init_scale={float(amp_init_scale):.1f}")
 
         # Profiling
         self.profile_batches = int(profile_batches)

@@ -26,7 +26,7 @@ if str(PACKAGE_PARENT) not in sys.path:
 from data.full_graph_dataset import ChunkAwareBatchSampler, FullGraphDataset, collate_fn_full_graph
 from data.graph_config import GraphConfig
 from models.registry import build_model
-from training.losses import D5RetrievalLoss
+from training.losses import build_loss
 from training.optimizer import build_optimizer, build_scheduler
 from training.trainer import D5Trainer, set_seed
 
@@ -200,6 +200,8 @@ def apply_cli_overrides(config: Dict[str, Any], args: argparse.Namespace) -> Dic
         value = getattr(args, attr, None)
         if value is not None:
             paths[attr] = value
+            if attr == "output_root":
+                paths.pop("resolved_output_root", None)
     if getattr(args, "batch_size", None) is not None:
         data["batch_size"] = int(args.batch_size)
     if getattr(args, "epochs", None) is not None:
@@ -366,7 +368,10 @@ def prepare_training_objects(config: Dict[str, Any]):
     model_cfg.setdefault("width", graph_cfg.width)
     model_cfg.setdefault("connectivity", graph_cfg.connectivity)
     model = build_model(model_cfg).to(device)
-    criterion = D5RetrievalLoss(config.get("loss", {})).to(device)
+    loss_cfg = dict(config.get("loss", {}))
+    loss_cfg.setdefault("height", graph_cfg.height)
+    loss_cfg.setdefault("width", graph_cfg.width)
+    criterion = build_loss(loss_cfg).to(device)
     optimizer = build_optimizer(model, config.get("optimizer", {}))
     scheduler = build_scheduler(optimizer, config.get("scheduler", {}))
     return model, criterion, optimizer, scheduler, device
@@ -395,6 +400,7 @@ def create_trainer(config: Dict[str, Any]) -> D5Trainer:
         wandb_run_name=logging_cfg.get("run_name"),
         grad_clip_norm=training_cfg.get("grad_clip_norm", 5.0),
         amp=bool(training_cfg.get("amp", False)),
+        amp_init_scale=float(training_cfg.get("amp_init_scale", 65536.0)),
         profile_batches=int(training_cfg.get("profile_batches", 0)),
     )
 

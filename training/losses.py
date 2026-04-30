@@ -204,3 +204,103 @@ class D5RetrievalLoss(nn.Module):
         if tuple(prior.shape) != tuple(gate.shape):
             raise ValueError(f"Prior shape {tuple(prior.shape)} does not match gate shape {tuple(gate.shape)}")
         return F.mse_loss(gate, prior)
+
+
+class D6HierarchicalMotifLoss(nn.Module):
+    """CE plus soft-slot regularizers for D6A hierarchical motifs."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        super().__init__()
+        cfg = dict(config)
+        self.lambda_cls = float(cfg.get("lambda_cls", 1.0))
+        self.lambda_slot_div = float(cfg.get("lambda_slot_div", 0.01))
+        self.lambda_border = float(cfg.get("lambda_border", 0.005))
+        self.lambda_slot_smooth = float(cfg.get("lambda_slot_smooth", 0.0))
+        self.border_width = int(cfg.get("border_width", 3))
+        self.height = int(cfg.get("height", 48))
+        self.width = int(cfg.get("width", 48))
+        self.eps = float(cfg.get("eps", 1e-6))
+
+        class_weights = None
+        if cfg.get("use_class_weights", True):
+            counts = cfg.get("class_counts")
+            if counts is None:
+                raise ValueError("loss.use_class_weights=true requires loss.class_counts")
+            class_weights = compute_class_weights(
+                counts,
+                normalize_mean=True,
+                power=float(cfg.get("class_weight_power", 1.0)),
+            )
+        self.ce = WeightedCrossEntropy(class_weights)
+        self.register_buffer("border_mask", self._make_border_mask(), persistent=False)
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        logits = model_out["logits"]
+        part_masks = model_out["part_masks"]
+        loss_ce = self.ce(logits, y.long())
+        loss_slot_div = self._slot_diversity_loss(part_masks)
+        loss_border = self._border_loss(part_masks)
+        loss_slot_smooth = self._slot_smoothness_loss(part_masks, batch.get("edge_index"))
+        total = (
+            self.lambda_cls * loss_ce
+            + self.lambda_slot_div * loss_slot_div
+            + self.lambda_border * loss_border
+            + self.lambda_slot_smooth * loss_slot_smooth
+        )
+        return {
+            "loss": total,
+            "total_loss": total,
+            "loss_ce": loss_ce,
+            "loss_slot_div": loss_slot_div,
+            "loss_border": loss_border,
+            "loss_slot_smooth": loss_slot_smooth,
+        }
+
+    def _slot_diversity_loss(self, part_masks: torch.Tensor) -> torch.Tensor:
+        m = part_masks / part_masks.norm(dim=2, keepdim=True).clamp_min(self.eps)
+        sim = torch.bmm(m, m.transpose(1, 2))
+        k = sim.shape[1]
+        off_diag = sim.masked_select(~torch.eye(k, dtype=torch.bool, device=sim.device).unsqueeze(0))
+        return off_diag.mean()
+
+    def _border_loss(self, part_masks: torch.Tensor) -> torch.Tensor:
+        border_mask = self.border_mask.to(device=part_masks.device, dtype=part_masks.dtype)
+        return (part_masks * border_mask.view(1, 1, -1)).mean()
+
+    def _slot_smoothness_loss(
+        self,
+        part_masks: torch.Tensor,
+        edge_index: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.lambda_slot_smooth <= 0.0 or edge_index is None:
+            return torch.zeros((), device=part_masks.device, dtype=part_masks.dtype)
+        src = edge_index[0].long()
+        dst = edge_index[1].long()
+        return (part_masks[:, :, src] - part_masks[:, :, dst]).abs().mean()
+
+    def _make_border_mask(self) -> torch.Tensor:
+        mask = torch.zeros(self.height, self.width, dtype=torch.float32)
+        bw = int(self.border_width)
+        if bw > 0:
+            mask[:bw, :] = 1.0
+            mask[-bw:, :] = 1.0
+            mask[:, :bw] = 1.0
+            mask[:, -bw:] = 1.0
+        return mask.reshape(-1)
+
+
+def build_loss(config: Dict[str, Any]) -> nn.Module:
+    cfg = dict(config)
+    name = str(cfg.get("name", "d5_retrieval")).lower()
+    if name in ("d5_retrieval", "class_pixel_motif_retrieval"):
+        return D5RetrievalLoss(cfg)
+    if name in ("d6_hierarchical_motif", "d6a_hierarchical_motif"):
+        return D6HierarchicalMotifLoss(cfg)
+    if name in ("fixed_motif_classification", "d5b_fixed_motif"):
+        return FixedMotifClassificationLoss(cfg)
+    raise ValueError(f"Unknown loss: {name}")

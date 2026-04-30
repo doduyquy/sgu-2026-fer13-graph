@@ -92,6 +92,7 @@ def create_d5b_trainer(config) -> D5Trainer:
         wandb_run_name=logging_cfg.get("run_name"),
         grad_clip_norm=training_cfg.get("grad_clip_norm", 5.0),
         amp=bool(training_cfg.get("amp", False)),
+        amp_init_scale=float(training_cfg.get("amp_init_scale", 65536.0)),
         profile_batches=int(training_cfg.get("profile_batches", 0)),
     )
 
