@@ -83,6 +83,106 @@ def _plot_heatmap(matrix: np.ndarray, out_path: Path, title: str, cmap: str = "v
     plt.close(fig)
 
 
+def _plot_class_slot_heatmap(matrix: np.ndarray, out_path: Path, title: str) -> None:
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    im = ax.imshow(matrix, cmap="viridis", aspect="auto")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(title)
+    ax.set_xlabel("slot")
+    ax.set_ylabel("emotion")
+    ax.set_xticks(range(matrix.shape[1]))
+    ax.set_yticks(range(matrix.shape[0]))
+    ax.set_yticklabels(EMOTION_NAMES[: matrix.shape[0]])
+    ax.tick_params(labelsize=8)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
+def _save_class_part_attention_csvs(avg_attn: np.ndarray, out_dir: Path, top_k: int = 5) -> None:
+    attn = np.asarray(avg_attn, dtype=np.float64)
+    eps = 1e-8
+    entropy = -(attn * np.log(np.clip(attn, eps, None))).sum(axis=1)
+    max_prob = attn.max(axis=1)
+
+    with (out_dir / "class_part_attention_entropy.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["class_idx", "class_name", "entropy", "max_prob"])
+        for idx, name in enumerate(EMOTION_NAMES[: attn.shape[0]]):
+            writer.writerow([idx, name, float(entropy[idx]), float(max_prob[idx])])
+
+    denom = np.linalg.norm(attn, axis=1, keepdims=True).clip(min=eps)
+    normed = attn / denom
+    sim = normed @ normed.T
+    with (out_dir / "class_part_attention_similarity.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["class_a", "class_b", "cosine_similarity"])
+        for i, name_i in enumerate(EMOTION_NAMES[: sim.shape[0]]):
+            for j, name_j in enumerate(EMOTION_NAMES[: sim.shape[1]]):
+                writer.writerow([name_i, name_j, float(sim[i, j])])
+
+    with (out_dir / "top_slots_per_class.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["class_idx", "class_name", "rank", "slot", "attention"])
+        top_k = min(int(top_k), attn.shape[1])
+        for idx, name in enumerate(EMOTION_NAMES[: attn.shape[0]]):
+            top_slots = np.argsort(attn[idx])[-top_k:][::-1]
+            for rank, slot in enumerate(top_slots, start=1):
+                writer.writerow([idx, name, rank, int(slot), float(attn[idx, slot])])
+
+
+def _plot_class_motif_grid(maps: np.ndarray, out_path: Path, title: str) -> None:
+    cols = 4
+    rows = int(math.ceil(maps.shape[0] / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.2, rows * 2.3))
+    axes = np.asarray(axes).reshape(-1)
+    for ax in axes:
+        ax.axis("off")
+    vmax = float(np.nanmax(maps)) if maps.size else 1.0
+    vmax = max(vmax, 1e-8)
+    for idx in range(maps.shape[0]):
+        axes[idx].imshow(maps[idx], cmap="magma", vmin=0.0, vmax=vmax)
+        axes[idx].set_title(EMOTION_NAMES[idx], fontsize=8)
+        axes[idx].axis("off")
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
+def _plot_sample_class_motif(
+    image: np.ndarray,
+    true_map: np.ndarray,
+    pred_map: np.ndarray,
+    class_attn: np.ndarray,
+    out_path: Path,
+    title: str,
+    true_label: int,
+    pred_label: int,
+) -> None:
+    fig, axes = plt.subplots(1, 4, figsize=(11, 3))
+    axes[0].imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
+    axes[0].set_title("image", fontsize=9)
+    axes[1].imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
+    axes[1].imshow(true_map, cmap="magma", alpha=0.68)
+    axes[1].set_title(f"true {EMOTION_NAMES[true_label]}", fontsize=9)
+    axes[2].imshow(image, cmap="gray", vmin=0.0, vmax=1.0)
+    axes[2].imshow(pred_map, cmap="magma", alpha=0.68)
+    axes[2].set_title(f"pred {EMOTION_NAMES[pred_label]}", fontsize=9)
+    top = np.argsort(class_attn[pred_label])[-6:][::-1]
+    axes[3].bar(np.arange(len(top)), class_attn[pred_label, top])
+    axes[3].set_xticks(np.arange(len(top)))
+    axes[3].set_xticklabels([str(int(t)) for t in top])
+    axes[3].set_title("pred top slots", fontsize=9)
+    axes[3].set_xlabel("slot")
+    for ax in axes[:3]:
+        ax.axis("off")
+    fig.suptitle(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
 def _plot_avg_slots(avg_masks: np.ndarray, out_dir: Path) -> None:
     k = avg_masks.shape[0]
     for idx in range(k):
@@ -166,6 +266,8 @@ def run_visualize(
     masks_dir = _ensure_dir(fig_root / "d6_part_masks")
     attn_dir = _ensure_dir(fig_root / "d6_part_attention")
     summary_dir = _ensure_dir(fig_root / "d6_slot_summary")
+    class_attn_dir = _ensure_dir(fig_root / "d6_class_part_attention")
+    class_motif_dir = _ensure_dir(fig_root / "d6_class_motif_maps")
 
     mask_sum = None
     sample_count = 0
@@ -173,7 +275,16 @@ def run_visualize(
     saved_correct = 0
     saved_wrong = 0
     saved_attn = 0
+    saved_class_motif = 0
     area_values: list[np.ndarray] = []
+    class_attn_sum = None
+    class_attn_count = 0
+    class_attn_true_sum = None
+    class_attn_pred_sum = None
+    class_pixel_true_sum = None
+    class_pixel_pred_sum = None
+    class_true_count = np.zeros(len(EMOTION_NAMES), dtype=np.float64)
+    class_pred_count = np.zeros(len(EMOTION_NAMES), dtype=np.float64)
 
     model.eval()
     for batch_idx, batch in enumerate(loader):
@@ -186,14 +297,27 @@ def run_visualize(
         pred = logits.argmax(dim=1)
         masks = out["part_masks"].detach().float()
         area_values.append(_to_numpy(out["slot_area"]))
+        class_part_attn = out.get("class_part_attn")
+        class_pixel_attn = None
+        if class_part_attn is not None:
+            class_part_attn = class_part_attn.detach().float()
+            class_pixel_attn = torch.einsum("bck,bkn->bcn", class_part_attn, masks)
+            cpa_np = _to_numpy(class_part_attn)
+            if class_attn_sum is None:
+                class_attn_sum = cpa_np.sum(axis=0)
+                class_attn_true_sum = np.zeros_like(class_attn_sum)
+                class_attn_pred_sum = np.zeros_like(class_attn_sum)
+                class_pixel_true_sum = np.zeros((cpa_np.shape[1], height * width), dtype=np.float64)
+                class_pixel_pred_sum = np.zeros((cpa_np.shape[1], height * width), dtype=np.float64)
+            else:
+                class_attn_sum += cpa_np.sum(axis=0)
+            class_attn_count += int(cpa_np.shape[0])
 
         batch_mask_sum = masks.sum(dim=0)
         mask_sum = batch_mask_sum if mask_sum is None else mask_sum + batch_mask_sum
         sample_count += int(masks.shape[0])
 
         for i in range(masks.shape[0]):
-            if saved_samples >= int(max_samples) and saved_correct >= int(max_samples // 2) and saved_wrong >= int(max_samples // 2):
-                continue
             image = _to_numpy(batch["x"][i, :, 0]).reshape(height, width)
             item_masks = _to_numpy(masks[i]).reshape(masks.shape[1], height, width)
             y_true = int(batch["y"][i].item())
@@ -242,6 +366,34 @@ def run_visualize(
                 )
                 saved_attn += 1
 
+            if class_part_attn is not None and class_pixel_attn is not None:
+                item_class_attn = _to_numpy(class_part_attn[i])
+                item_class_pixel = _to_numpy(class_pixel_attn[i])
+                if class_attn_true_sum is not None and class_attn_pred_sum is not None:
+                    class_attn_true_sum[y_true] += item_class_attn[y_true]
+                    class_attn_pred_sum[y_pred] += item_class_attn[y_pred]
+                    class_pixel_true_sum[y_true] += item_class_pixel[y_true]
+                    class_pixel_pred_sum[y_pred] += item_class_pixel[y_pred]
+                    class_true_count[y_true] += 1.0
+                    class_pred_count[y_pred] += 1.0
+                if saved_class_motif < int(max_samples):
+                    _plot_sample_class_motif(
+                        image=image,
+                        true_map=item_class_pixel[y_true].reshape(height, width),
+                        pred_map=item_class_pixel[y_pred].reshape(height, width),
+                        class_attn=item_class_attn,
+                        out_path=class_motif_dir / f"sample_class_motif_{saved_class_motif:03d}_id_{graph_id}_true_{y_true}_pred_{y_pred}.png",
+                        title=title,
+                        true_label=y_true,
+                        pred_label=y_pred,
+                    )
+                    _plot_class_slot_heatmap(
+                        item_class_attn,
+                        class_attn_dir / f"class_part_attn_per_sample_{saved_class_motif:03d}_id_{graph_id}.png",
+                        title=title,
+                    )
+                    saved_class_motif += 1
+
     if mask_sum is None or sample_count == 0:
         print("No samples were visualized.")
         return
@@ -252,9 +404,43 @@ def run_visualize(
     _plot_heatmap(sim, summary_dir / "slot_similarity.png", "Average slot mask cosine similarity", cmap="magma")
     _save_slot_area(area_values, summary_dir)
 
+    if class_attn_sum is not None and class_attn_count > 0:
+        avg_class_attn = class_attn_sum / float(class_attn_count)
+        _plot_class_slot_heatmap(
+            avg_class_attn,
+            class_attn_dir / "class_part_attn_grid.png",
+            "Average class-to-part attention",
+        )
+        _save_class_part_attention_csvs(avg_class_attn, class_attn_dir)
+        true_den = np.maximum(class_true_count[:, None], 1.0)
+        pred_den = np.maximum(class_pred_count[:, None], 1.0)
+        _plot_class_slot_heatmap(
+            class_attn_true_sum / true_den,
+            class_attn_dir / "class_part_attn_avg_by_true_class.png",
+            "Class-to-part attention by true class",
+        )
+        _plot_class_slot_heatmap(
+            class_attn_pred_sum / pred_den,
+            class_attn_dir / "class_part_attn_avg_by_pred_class.png",
+            "Class-to-part attention by predicted class",
+        )
+        _plot_class_motif_grid(
+            (class_pixel_true_sum / np.maximum(class_true_count[:, None], 1.0)).reshape(-1, height, width),
+            class_motif_dir / "class_pixel_motif_trueclass_avg.png",
+            "Class pixel motif by true class",
+        )
+        _plot_class_motif_grid(
+            (class_pixel_pred_sum / np.maximum(class_pred_count[:, None], 1.0)).reshape(-1, height, width),
+            class_motif_dir / "class_pixel_motif_predclass_avg.png",
+            "Class pixel motif by predicted class",
+        )
+
     print(f"D6 part masks: {masks_dir}")
     print(f"D6 part attention: {attn_dir}")
     print(f"D6 slot summary: {summary_dir}")
+    if class_attn_sum is not None:
+        print(f"D6 class-part attention: {class_attn_dir}")
+        print(f"D6 class motif maps: {class_motif_dir}")
 
 
 def main() -> None:

@@ -35,6 +35,15 @@ def evaluate_model(
     scores = []
     correct_examples = []
     wrong_examples = []
+    d6_diag = {
+        "slot_area_sum": None,
+        "border_mass_sum": None,
+        "class_part_attn_sum": None,
+        "slot_area_count": 0,
+        "border_mass_count": 0,
+        "class_part_attn_count": 0,
+        "class_part_entropy_sum": 0.0,
+    }
     for batch_idx, batch in enumerate(loader):
         if max_batches is not None and batch_idx >= int(max_batches):
             break
@@ -42,6 +51,7 @@ def evaluate_model(
         out = model(batch)
         logits = out["logits"]
         pred = logits.argmax(dim=1)
+        _accumulate_d6_diagnostics(out, d6_diag)
         y_true.extend(batch["y"].detach().cpu().tolist())
         y_pred.extend(pred.detach().cpu().tolist())
         graph_ids.extend(batch["graph_id"].detach().cpu().tolist())
@@ -77,7 +87,62 @@ def evaluate_model(
     metrics["scores"] = scores
     metrics["correct_examples"] = correct_examples
     metrics["wrong_examples"] = wrong_examples
+    diagnostics = _finalize_d6_diagnostics(d6_diag)
+    if diagnostics:
+        metrics["d6b_diagnostics"] = diagnostics
     return metrics
+
+
+def _accumulate_d6_diagnostics(model_out: Dict, d6_diag: Dict) -> None:
+    slot_area = model_out.get("slot_area")
+    if torch.is_tensor(slot_area):
+        value = slot_area.detach().float().sum(dim=0).cpu()
+        d6_diag["slot_area_sum"] = value if d6_diag["slot_area_sum"] is None else d6_diag["slot_area_sum"] + value
+        d6_diag["slot_area_count"] += int(slot_area.shape[0])
+
+    border_mass = model_out.get("border_mass_per_slot")
+    if torch.is_tensor(border_mass):
+        value = border_mass.detach().float().sum(dim=0).cpu()
+        d6_diag["border_mass_sum"] = value if d6_diag["border_mass_sum"] is None else d6_diag["border_mass_sum"] + value
+        d6_diag["border_mass_count"] += int(border_mass.shape[0])
+
+    class_part_attn = model_out.get("class_part_attn")
+    if torch.is_tensor(class_part_attn):
+        attn = class_part_attn.detach().float()
+        value = attn.sum(dim=0).cpu()
+        d6_diag["class_part_attn_sum"] = value if d6_diag["class_part_attn_sum"] is None else d6_diag["class_part_attn_sum"] + value
+        d6_diag["class_part_attn_count"] += int(attn.shape[0])
+        entropy = -(attn * attn.clamp_min(1e-6).log()).sum(dim=2).mean()
+        d6_diag["class_part_entropy_sum"] += float(entropy.cpu().item()) * int(attn.shape[0])
+
+
+def _finalize_d6_diagnostics(d6_diag: Dict) -> Dict:
+    diagnostics = {}
+    slot_count = int(d6_diag.get("slot_area_count") or 0)
+    if slot_count > 0 and d6_diag.get("slot_area_sum") is not None:
+        avg_slot_area = (d6_diag["slot_area_sum"] / float(slot_count)).numpy()
+        area_norm = avg_slot_area / max(float(avg_slot_area.sum()), 1e-8)
+        diagnostics["avg_slot_area"] = avg_slot_area.tolist()
+        diagnostics["max_slot_area"] = float(avg_slot_area.max())
+        diagnostics["min_slot_area"] = float(avg_slot_area.min())
+        diagnostics["slot_area_entropy"] = float(-(area_norm * np.log(np.clip(area_norm, 1e-8, None))).sum())
+
+    border_count = int(d6_diag.get("border_mass_count") or 0)
+    if border_count > 0 and d6_diag.get("border_mass_sum") is not None:
+        avg_border = (d6_diag["border_mass_sum"] / float(border_count)).numpy()
+        diagnostics["avg_border_mass_per_slot"] = avg_border.tolist()
+        diagnostics["diag_border_mass_mean"] = float(avg_border.mean())
+
+    class_count = int(d6_diag.get("class_part_attn_count") or 0)
+    if class_count > 0 and d6_diag.get("class_part_attn_sum") is not None:
+        avg_attn = (d6_diag["class_part_attn_sum"] / float(class_count)).numpy()
+        diagnostics["avg_class_part_attn"] = avg_attn.tolist()
+        diagnostics["avg_class_part_attn_entropy"] = float(d6_diag["class_part_entropy_sum"] / float(class_count))
+        diagnostics["top_slots_per_class"] = {
+            EMOTION_NAMES[c]: np.argsort(avg_attn[c])[-3:][::-1].astype(int).tolist()
+            for c in range(avg_attn.shape[0])
+        }
+    return diagnostics
 
 
 def save_confusion_matrix(cm: np.ndarray, out_path: str | Path) -> None:

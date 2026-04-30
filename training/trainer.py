@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from data.labels import EMOTION_NAMES
+from evaluation.metrics import classification_report_dict
 from evaluation.metrics import compute_metrics
 from training.optimizer import step_scheduler
 
@@ -56,6 +58,39 @@ def _cuda_mem_stats(device: torch.device) -> Dict[str, float]:
         "cuda_reserved_gb": torch.cuda.memory_reserved(device) / gib,
         "cuda_max_allocated_gb": torch.cuda.max_memory_allocated(device) / gib,
     }
+
+
+def _optimizer_lr_metrics(optimizer: torch.optim.Optimizer) -> Dict[str, float]:
+    lrs = [float(group.get("lr", 0.0)) for group in optimizer.param_groups]
+    if not lrs:
+        return {}
+    metrics = {
+        "lr": lrs[0],
+        "train_lr": lrs[0],
+        "lr_min": min(lrs),
+        "lr_max": max(lrs),
+    }
+    for idx, lr in enumerate(lrs):
+        metrics[f"lr_group_{idx}"] = lr
+    return metrics
+
+
+def _cosine_mean_similarity(vectors: torch.Tensor) -> torch.Tensor:
+    if vectors.ndim != 2 or vectors.shape[0] < 2:
+        return vectors.new_tensor(0.0)
+    normed = torch.nn.functional.normalize(vectors.float(), dim=1, eps=1e-8)
+    sim = normed @ normed.transpose(0, 1)
+    k = sim.shape[0]
+    off_diag = sim.masked_select(~torch.eye(k, dtype=torch.bool, device=sim.device))
+    return off_diag.mean() if off_diag.numel() > 0 else vectors.new_tensor(0.0)
+
+
+def _pair_cosine(vectors: torch.Tensor, left: int, right: int) -> Optional[torch.Tensor]:
+    if vectors.ndim != 2 or vectors.shape[0] <= max(left, right):
+        return None
+    a = vectors[left].float()
+    b = vectors[right].float()
+    return torch.nn.functional.cosine_similarity(a, b, dim=0, eps=1e-8)
 
 
 class D5Trainer:
@@ -409,6 +444,7 @@ class D5Trainer:
                 totals[key] = totals.get(key, 0.0) + _to_float(value)
             totals["grad_norm"] = totals.get("grad_norm", 0.0) + _to_float(grad_norm)
             self._add_diagnostics(totals, out.get("diagnostics", {}))
+            self._add_output_diagnostics(totals, out)
             count += 1
             progress.set_postfix(loss=f"{_to_float(loss):.4f}")
 
@@ -463,6 +499,7 @@ class D5Trainer:
             for key, value in loss_dict.items():
                 totals[key] = totals.get(key, 0.0) + _to_float(value)
             self._add_diagnostics(totals, out.get("diagnostics", {}))
+            self._add_output_diagnostics(totals, out)
             count += 1
 
         metrics = {f"{prefix}_{k}": v / max(count, 1) for k, v in totals.items()}
@@ -475,6 +512,7 @@ class D5Trainer:
             "weighted_f1": 0.0,
         }
         metrics.update({f"{prefix}_{k}": float(v) for k, v in cls_metrics.items()})
+        self._add_selected_class_metrics(metrics, prefix, y_true, y_pred, pred_count)
         metrics[f"{prefix}_batches"] = float(count)
         for i, c in enumerate(pred_count.tolist()):
             metrics[f"{prefix}_pred_count_{i}"] = float(c)
@@ -517,6 +555,7 @@ class D5Trainer:
         stale_epochs = 0
         history = []
         for epoch in range(1, int(epochs) + 1):
+            lr_metrics_before = _optimizer_lr_metrics(self.optimizer)
             train_metrics = self.train_one_epoch(
                 train_loader,
                 epoch,
@@ -526,8 +565,20 @@ class D5Trainer:
             )
             val_metrics = self.validate(val_loader, max_val_batches, prefix="val")
             metrics = {"epoch": float(epoch), **train_metrics, **val_metrics}
+            metrics.update(lr_metrics_before)
             monitor_value = float(metrics.get(monitor, val_metrics.get("val_macro_f1", 0.0)))
+            metrics["scheduler_monitor_value"] = monitor_value
+            metrics[f"scheduler_monitor_{monitor}"] = monitor_value
+            lr_before_step = _optimizer_lr_metrics(self.optimizer)
             step_scheduler(self.scheduler, monitor_value)
+            lr_after_step = _optimizer_lr_metrics(self.optimizer)
+            if lr_after_step:
+                metrics["lr_after_scheduler"] = lr_after_step.get("lr", 0.0)
+                metrics["lr_min_after_scheduler"] = lr_after_step.get("lr_min", 0.0)
+                metrics["lr_max_after_scheduler"] = lr_after_step.get("lr_max", 0.0)
+                metrics["scheduler_lr_reduced"] = float(
+                    lr_after_step.get("lr_min", 0.0) < lr_before_step.get("lr_min", 0.0)
+                )
             improved = monitor_value > self.best_metric
             if improved:
                 self.best_metric = monitor_value
@@ -595,6 +646,70 @@ class D5Trainer:
         for key, value in diagnostics.items():
             if torch.is_tensor(value) and value.numel() == 1:
                 totals[f"diag_{key}"] = totals.get(f"diag_{key}", 0.0) + _to_float(value)
+
+    @staticmethod
+    def _add_output_diagnostics(totals: Dict[str, float], out: Dict[str, Any]) -> None:
+        class_part_attn = out.get("class_part_attn")
+        if torch.is_tensor(class_part_attn):
+            attn = class_part_attn.detach().float()
+            entropy = -(attn * attn.clamp_min(1e-8).log()).sum(dim=2)
+            max_prob = attn.max(dim=2).values
+            avg_by_class = attn.mean(dim=0)
+            values: Dict[str, Optional[torch.Tensor]] = {
+                "diag_class_part_entropy_mean": entropy.mean(),
+                "diag_class_part_max_mean": max_prob.mean(),
+                "diag_class_part_top1_mean": max_prob.mean(),
+                "diag_class_part_similarity_mean": _cosine_mean_similarity(avg_by_class),
+                "diag_class_part_similarity_sad_neutral": _pair_cosine(avg_by_class, 4, 6),
+                "diag_class_part_similarity_fear_neutral": _pair_cosine(avg_by_class, 2, 6),
+                "diag_class_part_similarity_fear_surprise": _pair_cosine(avg_by_class, 2, 5),
+                "diag_class_part_similarity_disgust_angry": _pair_cosine(avg_by_class, 1, 0),
+            }
+            for key, value in values.items():
+                if torch.is_tensor(value):
+                    totals[key] = totals.get(key, 0.0) + _to_float(value)
+
+        slot_area = out.get("slot_area")
+        if torch.is_tensor(slot_area):
+            area = slot_area.detach().float()
+            area_norm = area / area.sum(dim=1, keepdim=True).clamp_min(1e-8)
+            entropy = -(area_norm * area_norm.clamp_min(1e-8).log()).sum(dim=1)
+            totals["diag_effective_slots"] = totals.get("diag_effective_slots", 0.0) + _to_float(entropy.exp().mean())
+
+        border_mass = out.get("border_mass_per_slot", out.get("border_mass"))
+        if torch.is_tensor(border_mass):
+            border = border_mass.detach().float()
+            totals["diag_border_mass_max"] = totals.get("diag_border_mass_max", 0.0) + _to_float(border.amax(dim=1).mean())
+
+    @staticmethod
+    def _add_selected_class_metrics(
+        metrics: Dict[str, float],
+        prefix: str,
+        y_true,
+        y_pred,
+        pred_count: torch.Tensor,
+    ) -> None:
+        if not y_true:
+            return
+        report = classification_report_dict(y_true, y_pred)
+        selected = {
+            "fear": "Fear",
+            "sad": "Sad",
+            "neutral": "Neutral",
+            "disgust": "Disgust",
+        }
+        for short_name, label in selected.items():
+            values = report.get(label, {})
+            if not isinstance(values, dict):
+                continue
+            metrics[f"{prefix}_{short_name}_precision"] = float(values.get("precision", 0.0))
+            metrics[f"{prefix}_{short_name}_recall"] = float(values.get("recall", 0.0))
+            metrics[f"{prefix}_{short_name}_f1"] = float(values.get("f1-score", 0.0))
+        label_to_idx = {name.lower(): idx for idx, name in enumerate(EMOTION_NAMES)}
+        for short_name in ("fear", "sad", "disgust"):
+            idx = label_to_idx.get(short_name)
+            if idx is not None:
+                metrics[f"{prefix}_pred_count_{short_name}"] = float(pred_count[idx].item())
 
     def _compute_grad_norm(self) -> torch.Tensor:
         norms = [

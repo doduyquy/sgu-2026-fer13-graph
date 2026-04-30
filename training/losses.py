@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 import torch
@@ -215,8 +216,11 @@ class D6HierarchicalMotifLoss(nn.Module):
         self.lambda_cls = float(cfg.get("lambda_cls", 1.0))
         self.lambda_slot_div = float(cfg.get("lambda_slot_div", 0.01))
         self.lambda_border = float(cfg.get("lambda_border", 0.005))
+        self.lambda_slot_balance = float(cfg.get("lambda_slot_balance", 0.0))
         self.lambda_slot_smooth = float(cfg.get("lambda_slot_smooth", 0.0))
         self.border_width = int(cfg.get("border_width", 3))
+        self.border_loss_type = str(cfg.get("border_loss_type", "pixel_mean")).lower()
+        self.slot_balance_type = str(cfg.get("slot_balance_type", "kl_uniform")).lower()
         self.height = int(cfg.get("height", 48))
         self.width = int(cfg.get("width", 48))
         self.eps = float(cfg.get("eps", 1e-6))
@@ -245,11 +249,13 @@ class D6HierarchicalMotifLoss(nn.Module):
         loss_ce = self.ce(logits, y.long())
         loss_slot_div = self._slot_diversity_loss(part_masks)
         loss_border = self._border_loss(part_masks)
+        loss_slot_balance = self._slot_balance_loss(part_masks)
         loss_slot_smooth = self._slot_smoothness_loss(part_masks, batch.get("edge_index"))
         total = (
             self.lambda_cls * loss_ce
             + self.lambda_slot_div * loss_slot_div
             + self.lambda_border * loss_border
+            + self.lambda_slot_balance * loss_slot_balance
             + self.lambda_slot_smooth * loss_slot_smooth
         )
         return {
@@ -258,6 +264,7 @@ class D6HierarchicalMotifLoss(nn.Module):
             "loss_ce": loss_ce,
             "loss_slot_div": loss_slot_div,
             "loss_border": loss_border,
+            "loss_slot_balance": loss_slot_balance,
             "loss_slot_smooth": loss_slot_smooth,
         }
 
@@ -270,7 +277,29 @@ class D6HierarchicalMotifLoss(nn.Module):
 
     def _border_loss(self, part_masks: torch.Tensor) -> torch.Tensor:
         border_mask = self.border_mask.to(device=part_masks.device, dtype=part_masks.dtype)
-        return (part_masks * border_mask.view(1, 1, -1)).mean()
+        if self.border_loss_type in ("pixel_mean", "d6a_pixel_mean"):
+            return (part_masks * border_mask.view(1, 1, -1)).mean()
+        if self.border_loss_type in ("slot_ratio", "slot_border_ratio"):
+            border_mass = (part_masks * border_mask.view(1, 1, -1)).sum(dim=2)
+            slot_mass = part_masks.sum(dim=2).clamp_min(self.eps)
+            return (border_mass / slot_mass).mean()
+        if self.border_loss_type in ("dominant", "dominant_border"):
+            dominant = part_masks.max(dim=1).values
+            border_pixels = border_mask.bool()
+            if not bool(border_pixels.any()):
+                return torch.zeros((), device=part_masks.device, dtype=part_masks.dtype)
+            return dominant[:, border_pixels].mean()
+        raise ValueError(f"Unsupported border_loss_type: {self.border_loss_type}")
+
+    def _slot_balance_loss(self, part_masks: torch.Tensor) -> torch.Tensor:
+        if self.lambda_slot_balance <= 0.0:
+            return torch.zeros((), device=part_masks.device, dtype=part_masks.dtype)
+        if self.slot_balance_type != "kl_uniform":
+            raise ValueError(f"Unsupported slot_balance_type: {self.slot_balance_type}")
+        area = part_masks.mean(dim=2)
+        area_norm = area / area.sum(dim=1, keepdim=True).clamp_min(self.eps)
+        k = area_norm.shape[1]
+        return (area_norm * (area_norm.clamp_min(self.eps).log() + math.log(float(k)))).sum(dim=1).mean()
 
     def _slot_smoothness_loss(
         self,
@@ -300,6 +329,10 @@ def build_loss(config: Dict[str, Any]) -> nn.Module:
     if name in ("d5_retrieval", "class_pixel_motif_retrieval"):
         return D5RetrievalLoss(cfg)
     if name in ("d6_hierarchical_motif", "d6a_hierarchical_motif"):
+        return D6HierarchicalMotifLoss(cfg)
+    if name in ("d6b_class_part_motif", "d6b_class_part_attention_motif"):
+        cfg.setdefault("border_loss_type", "slot_ratio")
+        cfg.setdefault("slot_balance_type", "kl_uniform")
         return D6HierarchicalMotifLoss(cfg)
     if name in ("fixed_motif_classification", "d5b_fixed_motif"):
         return FixedMotifClassificationLoss(cfg)

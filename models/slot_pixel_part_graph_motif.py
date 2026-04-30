@@ -123,6 +123,7 @@ class SlotPixelPartGraphMotif(nn.Module):
         use_part_position: bool = True,
         assignment_temperature: float = 1.0,
         return_attention: bool = True,
+        use_class_part_attention: bool = False,
         height: int = 48,
         width: int = 48,
         connectivity: int = 8,
@@ -140,6 +141,7 @@ class SlotPixelPartGraphMotif(nn.Module):
         self.use_part_position = bool(use_part_position)
         self.assignment_temperature = float(assignment_temperature)
         self.return_attention = bool(return_attention)
+        self.use_class_part_attention = bool(use_class_part_attention)
 
         if self.num_nodes != self.height * self.width:
             raise ValueError(
@@ -187,6 +189,11 @@ class SlotPixelPartGraphMotif(nn.Module):
             nn.Dropout(float(dropout)),
             nn.Linear(128, self.num_classes),
         )
+        if self.use_class_part_attention:
+            self.class_queries = nn.Parameter(torch.empty(self.num_classes, self.hidden_dim))
+            self.class_key = nn.Linear(self.hidden_dim, self.hidden_dim)
+            self.class_value = nn.Linear(self.hidden_dim, self.hidden_dim)
+            self.class_logit_head = nn.Linear(self.hidden_dim, 1)
         self.register_buffer("pixel_positions", self._make_positions(), persistent=False)
         self.register_buffer("border_mask", self._make_border_mask(border_width=3), persistent=False)
         self.reset_parameters()
@@ -211,6 +218,8 @@ class SlotPixelPartGraphMotif(nn.Module):
 
     def reset_parameters(self) -> None:
         nn.init.normal_(self.part_queries, mean=0.0, std=0.02)
+        if self.use_class_part_attention:
+            nn.init.normal_(self.class_queries, mean=0.0, std=0.02)
 
     def forward(
         self,
@@ -257,10 +266,16 @@ class SlotPixelPartGraphMotif(nn.Module):
         for layer in self.part_layers:
             part_context, part_attn = layer(part_context)
 
-        image_feat = part_context.mean(dim=1)
-        logits = self.classifier(image_feat)
+        class_part_attn = None
+        class_repr = None
+        if self.use_class_part_attention:
+            class_part_attn, class_repr, logits = self._class_part_attention(part_context)
+        else:
+            image_feat = part_context.mean(dim=1)
+            logits = self.classifier(image_feat)
         slot_area = part_masks.mean(dim=2)
         border_mass = (part_masks * self.border_mask.to(part_masks).view(1, 1, -1)).mean(dim=2)
+        border_mass_per_slot = self._slot_border_ratio(part_masks)
 
         out = {
             "logits": logits,
@@ -269,13 +284,36 @@ class SlotPixelPartGraphMotif(nn.Module):
             "part_features": part_feats,
             "part_context": part_context,
             "part_attn": part_attn if self.return_attention else None,
+            "class_part_attn": class_part_attn,
+            "class_repr": class_repr,
             "slot_area": slot_area,
             "border_mass": border_mass,
+            "border_mass_per_slot": border_mass_per_slot,
             "part_centers": part_centers,
             "pool_weights": pool_weights,
-            "diagnostics": self._diagnostics(part_masks, slot_area, border_mass, part_attn),
+            "diagnostics": self._diagnostics(
+                part_masks=part_masks,
+                slot_area=slot_area,
+                border_mass=border_mass,
+                border_mass_per_slot=border_mass_per_slot,
+                part_attn=part_attn,
+                class_part_attn=class_part_attn,
+            ),
         }
         return out
+
+    def _class_part_attention(
+        self,
+        part_context: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        k_part = self.class_key(part_context)
+        v_part = self.class_value(part_context)
+        class_logits = torch.einsum("ch,bkh->bck", self.class_queries, k_part)
+        class_logits = class_logits / math.sqrt(float(self.hidden_dim))
+        class_part_attn = torch.softmax(class_logits, dim=2)
+        class_repr = torch.einsum("bck,bkh->bch", class_part_attn, v_part)
+        logits = self.class_logit_head(class_repr).squeeze(-1)
+        return class_part_attn, class_repr, logits
 
     def _assign_parts(
         self,
@@ -311,25 +349,42 @@ class SlotPixelPartGraphMotif(nn.Module):
             mask[:, -bw:] = 1.0
         return mask.reshape(-1)
 
+    def _slot_border_ratio(self, part_masks: torch.Tensor) -> torch.Tensor:
+        border_mask = self.border_mask.to(device=part_masks.device, dtype=part_masks.dtype)
+        border_mass = (part_masks * border_mask.view(1, 1, -1)).sum(dim=2)
+        slot_mass = part_masks.sum(dim=2).clamp_min(1e-6)
+        return border_mass / slot_mass
+
     @staticmethod
     def _diagnostics(
         part_masks: torch.Tensor,
         slot_area: torch.Tensor,
         border_mass: torch.Tensor,
+        border_mass_per_slot: torch.Tensor,
         part_attn: Optional[torch.Tensor],
+        class_part_attn: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         m = F.normalize(part_masks.float(), dim=2, eps=1e-6)
         sim = torch.bmm(m, m.transpose(1, 2))
         k = sim.shape[1]
         off = sim.masked_select(~torch.eye(k, dtype=torch.bool, device=sim.device).unsqueeze(0))
+        area_norm = slot_area.float() / slot_area.float().sum(dim=1, keepdim=True).clamp_min(1e-6)
+        area_entropy = -(area_norm * area_norm.clamp_min(1e-6).log()).sum(dim=1)
         diagnostics = {
             "slot_div": off.mean().detach(),
             "slot_similarity_mean": off.mean().detach(),
             "border_mass": border_mass.mean().detach(),
+            "border_mass_mean": border_mass_per_slot.mean().detach(),
             "slot_area_mean": slot_area.mean().detach(),
             "slot_area_min": slot_area.amin().detach(),
             "slot_area_max": slot_area.amax().detach(),
+            "slot_area_entropy": area_entropy.mean().detach(),
         }
         if part_attn is not None:
             diagnostics["part_attn_std"] = part_attn.detach().float().std(unbiased=False)
+        if class_part_attn is not None:
+            class_entropy = -(
+                class_part_attn.float() * class_part_attn.float().clamp_min(1e-6).log()
+            ).sum(dim=2)
+            diagnostics["class_part_entropy"] = class_entropy.mean().detach()
         return diagnostics

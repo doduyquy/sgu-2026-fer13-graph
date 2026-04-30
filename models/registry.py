@@ -17,4 +17,7 @@ def build_model(config: Dict[str, Any]) -> nn.Module:
         return ClassPixelMotifGraphRetrieval.from_config(cfg)
     if name == "slot_pixel_part_graph_motif":
         return SlotPixelPartGraphMotif.from_config(cfg)
+    if name == "slot_pixel_part_graph_motif_d6b":
+        cfg["use_class_part_attention"] = True
+        return SlotPixelPartGraphMotif.from_config(cfg)
     raise ValueError(f"Unknown model: {name}")

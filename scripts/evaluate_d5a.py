@@ -54,10 +54,13 @@ def run_evaluate(config, checkpoint=None):
             "accuracy": metrics["accuracy"],
             "macro_f1": metrics["macro_f1"],
             "weighted_f1": metrics["weighted_f1"],
+            "pred_count": metrics["pred_count"],
             "classification_report": metrics["classification_report"],
         },
         eval_dir / "metrics.json",
     )
+    if metrics.get("d6b_diagnostics"):
+        dump_json(metrics["d6b_diagnostics"], eval_dir / "d6b_diagnostics.json")
     report = metrics["classification_report"]
     dump_json(report, eval_dir / "classification_report.json")
     report_lines = []
