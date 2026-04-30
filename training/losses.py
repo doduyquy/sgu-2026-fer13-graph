@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -323,6 +323,195 @@ class D6HierarchicalMotifLoss(nn.Module):
         return mask.reshape(-1)
 
 
+class D6ClassAttendedMotifLoss(D6HierarchicalMotifLoss):
+    """D6B loss plus class-conditioned objectives for D6C-light."""
+
+    DEFAULT_CONFUSION_PAIRS = ((2, 4), (2, 6), (2, 5), (4, 6), (0, 1))
+    PAIR_DIAG_NAMES = {
+        (2, 4): "fear_sad",
+        (2, 6): "fear_neutral",
+        (2, 5): "fear_surprise",
+        (4, 6): "sad_neutral",
+        (0, 1): "angry_disgust",
+    }
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        cfg = dict(config)
+        cfg.setdefault("border_loss_type", "slot_ratio")
+        cfg.setdefault("slot_balance_type", "kl_uniform")
+        super().__init__(cfg)
+        self.lambda_class_border = float(cfg.get("lambda_class_border", 0.0025))
+        self.lambda_class_attn_sep = float(cfg.get("lambda_class_attn_sep", 0.005))
+        self.lambda_supcon = float(cfg.get("lambda_supcon", 0.03))
+        self.class_attn_sep_margin = float(cfg.get("class_attn_sep_margin", 0.90))
+        self.supcon_temperature = float(cfg.get("supcon_temperature", 0.2))
+        self.confusion_pairs = self._parse_confusion_pairs(cfg.get("confusion_pairs", self.DEFAULT_CONFUSION_PAIRS))
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        logits = model_out["logits"]
+        part_masks = model_out["part_masks"]
+        y = y.long()
+
+        loss_ce = self.ce(logits, y)
+        loss_slot_div = self._slot_diversity_loss(part_masks)
+        loss_border = self._border_loss(part_masks)
+        loss_slot_balance = self._slot_balance_loss(part_masks)
+        loss_slot_smooth = self._slot_smoothness_loss(part_masks, batch.get("edge_index"))
+        loss_class_border, class_border_diag = self._class_attended_border_loss(model_out, y)
+        loss_class_attn_sep, class_attn_diag = self._class_attention_separation_loss(model_out)
+        loss_supcon, supcon_diag = self._supervised_contrastive_loss(model_out, y)
+
+        total = (
+            self.lambda_cls * loss_ce
+            + self.lambda_slot_div * loss_slot_div
+            + self.lambda_border * loss_border
+            + self.lambda_slot_balance * loss_slot_balance
+            + self.lambda_slot_smooth * loss_slot_smooth
+            + self.lambda_class_border * loss_class_border
+            + self.lambda_class_attn_sep * loss_class_attn_sep
+            + self.lambda_supcon * loss_supcon
+        )
+
+        out = {
+            "loss": total,
+            "total_loss": total,
+            "loss_ce": loss_ce,
+            "loss_slot_div": loss_slot_div,
+            "loss_border": loss_border,
+            "loss_slot_balance": loss_slot_balance,
+            "loss_slot_smooth": loss_slot_smooth,
+            "loss_class_border": loss_class_border,
+            "loss_class_attn_sep": loss_class_attn_sep,
+            "loss_supcon": loss_supcon,
+        }
+        out.update(class_border_diag)
+        out.update(class_attn_diag)
+        out.update(supcon_diag)
+        return out
+
+    def _class_attended_border_loss(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+    ) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        logits = model_out["logits"]
+        part_masks = model_out.get("part_masks")
+        class_part_attn = model_out.get("class_part_attn")
+        zero = logits.new_zeros(())
+        if not torch.is_tensor(part_masks) or not torch.is_tensor(class_part_attn):
+            return zero, {
+                "diag_true_class_border_mass_mean": zero,
+                "diag_true_class_border_mass_max": zero,
+            }
+
+        border_mask = self.border_mask.to(device=part_masks.device, dtype=part_masks.dtype)
+        if border_mask.numel() != part_masks.shape[-1]:
+            raise ValueError(
+                f"Border mask has {border_mask.numel()} pixels, but part_masks has {part_masks.shape[-1]} nodes"
+            )
+        class_pixel_attn = torch.einsum("bck,bkn->bcn", class_part_attn, part_masks)
+        rows = torch.arange(y.shape[0], device=y.device)
+        true_motif = class_pixel_attn[rows, y, :]
+        border_mass = (true_motif * border_mask.view(1, -1)).sum(dim=1)
+        motif_mass = true_motif.sum(dim=1).clamp_min(self.eps)
+        border_ratio = border_mass / motif_mass
+        return border_ratio.mean(), {
+            "diag_true_class_border_mass_mean": border_ratio.detach().mean(),
+            "diag_true_class_border_mass_max": border_ratio.detach().max(),
+        }
+
+    def _class_attention_separation_loss(
+        self,
+        model_out: Dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        logits = model_out["logits"]
+        class_part_attn = model_out.get("class_part_attn")
+        zero = logits.new_zeros(())
+        diag: Dict[str, torch.Tensor] = {
+            "diag_class_attn_sim_fear_sad": zero,
+            "diag_class_attn_sim_fear_neutral": zero,
+            "diag_class_attn_sim_fear_surprise": zero,
+            "diag_class_attn_sim_sad_neutral": zero,
+            "diag_class_attn_sim_angry_disgust": zero,
+            "diag_class_part_entropy_mean": zero,
+        }
+        if not torch.is_tensor(class_part_attn):
+            return zero, diag
+
+        attn = class_part_attn.float()
+        entropy = -(attn * attn.clamp_min(self.eps).log()).sum(dim=2)
+        diag["diag_class_part_entropy_mean"] = entropy.detach().mean()
+        avg_attn = attn.mean(dim=0)
+        penalties = []
+        for left, right in self.confusion_pairs:
+            if avg_attn.shape[0] <= max(left, right):
+                continue
+            sim = F.cosine_similarity(avg_attn[left], avg_attn[right], dim=0, eps=self.eps)
+            penalties.append(F.relu(sim - self.class_attn_sep_margin))
+            pair_name = self.PAIR_DIAG_NAMES.get((left, right), self.PAIR_DIAG_NAMES.get((right, left)))
+            if pair_name is not None:
+                diag[f"diag_class_attn_sim_{pair_name}"] = sim.detach()
+
+        if not penalties:
+            return zero, diag
+        return torch.stack(penalties).mean().to(dtype=logits.dtype), diag
+
+    def _supervised_contrastive_loss(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+    ) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        logits = model_out["logits"]
+        class_repr = model_out.get("class_repr")
+        zero = logits.new_zeros(())
+        diag = {
+            "diag_supcon_valid_anchors": zero,
+            "diag_supcon_positive_pairs": zero,
+        }
+        if not torch.is_tensor(class_repr) or class_repr.shape[0] <= 1:
+            return zero, diag
+
+        rows = torch.arange(y.shape[0], device=y.device)
+        z = class_repr[rows, y, :].float()
+        z = F.normalize(z, dim=-1, eps=self.eps)
+        temperature = max(self.supcon_temperature, self.eps)
+        sim = (z @ z.transpose(0, 1)) / temperature
+        bsz = sim.shape[0]
+        self_mask = torch.eye(bsz, dtype=torch.bool, device=sim.device)
+        positive_mask = y.view(-1, 1).eq(y.view(1, -1)) & ~self_mask
+        valid_anchor = positive_mask.any(dim=1)
+        if not bool(valid_anchor.any()):
+            return zero, diag
+
+        non_self_logits = sim.masked_fill(self_mask, -float("inf"))
+        max_logits = non_self_logits.max(dim=1, keepdim=True).values
+        max_logits = torch.where(torch.isfinite(max_logits), max_logits, torch.zeros_like(max_logits))
+        stable_logits = sim - max_logits.detach()
+        exp_logits = stable_logits.exp().masked_fill(self_mask, 0.0)
+        log_prob = stable_logits - exp_logits.sum(dim=1, keepdim=True).clamp_min(self.eps).log()
+        pos_float = positive_mask.to(dtype=log_prob.dtype)
+        pos_count = pos_float.sum(dim=1).clamp_min(1.0)
+        per_anchor = -(log_prob * pos_float).sum(dim=1) / pos_count
+        loss = per_anchor[valid_anchor].mean()
+        diag["diag_supcon_valid_anchors"] = valid_anchor.float().sum().detach()
+        diag["diag_supcon_positive_pairs"] = positive_mask.float().sum().detach()
+        return loss.to(dtype=logits.dtype), diag
+
+    @staticmethod
+    def _parse_confusion_pairs(value: Sequence[Sequence[int]]) -> tuple[tuple[int, int], ...]:
+        pairs = []
+        for item in value:
+            if len(item) != 2:
+                raise ValueError(f"Each confusion pair must have two class indices, got {item}")
+            pairs.append((int(item[0]), int(item[1])))
+        return tuple(pairs)
+
+
 def build_loss(config: Dict[str, Any]) -> nn.Module:
     cfg = dict(config)
     name = str(cfg.get("name", "d5_retrieval")).lower()
@@ -334,6 +523,8 @@ def build_loss(config: Dict[str, Any]) -> nn.Module:
         cfg.setdefault("border_loss_type", "slot_ratio")
         cfg.setdefault("slot_balance_type", "kl_uniform")
         return D6HierarchicalMotifLoss(cfg)
+    if name in ("d6c_class_attended_motif", "d6c_class_attended_objectives"):
+        return D6ClassAttendedMotifLoss(cfg)
     if name in ("fixed_motif_classification", "d5b_fixed_motif"):
         return FixedMotifClassificationLoss(cfg)
     raise ValueError(f"Unknown loss: {name}")

@@ -30,6 +30,14 @@ from common import (  # noqa: E402
 from data.labels import EMOTION_NAMES  # noqa: E402
 from training.trainer import move_to_device  # noqa: E402
 
+CONFUSION_PAIRS = [
+    (2, 4, "Fear", "Sad"),
+    (2, 6, "Fear", "Neutral"),
+    (2, 5, "Fear", "Surprise"),
+    (4, 6, "Sad", "Neutral"),
+    (0, 1, "Angry", "Disgust"),
+]
+
 
 def _ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
@@ -129,6 +137,55 @@ def _save_class_part_attention_csvs(avg_attn: np.ndarray, out_dir: Path, top_k: 
             top_slots = np.argsort(attn[idx])[-top_k:][::-1]
             for rank, slot in enumerate(top_slots, start=1):
                 writer.writerow([idx, name, rank, int(slot), float(attn[idx, slot])])
+
+    with (out_dir / "confusion_pair_attention_similarity.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["class_a_idx", "class_a", "class_b_idx", "class_b", "cosine_similarity"])
+        for left, right, left_name, right_name in CONFUSION_PAIRS:
+            if sim.shape[0] > max(left, right):
+                writer.writerow([left, left_name, right, right_name, float(sim[left, right])])
+
+
+def _make_border_mask_np(height: int, width: int, border_width: int = 3) -> np.ndarray:
+    mask = np.zeros((height, width), dtype=np.float64)
+    bw = int(border_width)
+    if bw > 0:
+        mask[:bw, :] = 1.0
+        mask[-bw:, :] = 1.0
+        mask[:, :bw] = 1.0
+        mask[:, -bw:] = 1.0
+    return mask.reshape(-1)
+
+
+def _save_class_motif_border_mass_csv(
+    true_maps: np.ndarray,
+    pred_maps: np.ndarray,
+    out_dir: Path,
+    height: int,
+    width: int,
+    border_width: int = 3,
+) -> None:
+    border_mask = _make_border_mask_np(height, width, border_width=border_width)
+    rows = []
+    for source, maps in (("true_class_avg", true_maps), ("pred_class_avg", pred_maps)):
+        flat_maps = np.asarray(maps, dtype=np.float64).reshape(maps.shape[0], -1)
+        for idx, name in enumerate(EMOTION_NAMES[: flat_maps.shape[0]]):
+            motif = flat_maps[idx]
+            total_mass = float(np.sum(motif))
+            border_ratio = float(np.sum(motif * border_mask) / max(total_mass, 1e-8))
+            rows.append([source, idx, name, border_ratio, total_mass])
+
+    with (out_dir / "class_motif_border_mass_by_class.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["source", "class_idx", "class_name", "border_mass_ratio", "motif_mass"])
+        writer.writerows(rows)
+
+    with (out_dir / "true_class_border_mass_by_class.csv").open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["class_idx", "class_name", "border_mass_ratio", "motif_mass"])
+        for source, idx, name, border_ratio, total_mass in rows:
+            if source == "true_class_avg":
+                writer.writerow([idx, name, border_ratio, total_mass])
 
 
 def _plot_class_motif_grid(maps: np.ndarray, out_path: Path, title: str) -> None:
@@ -433,6 +490,17 @@ def run_visualize(
             (class_pixel_pred_sum / np.maximum(class_pred_count[:, None], 1.0)).reshape(-1, height, width),
             class_motif_dir / "class_pixel_motif_predclass_avg.png",
             "Class pixel motif by predicted class",
+        )
+        true_class_maps = (class_pixel_true_sum / np.maximum(class_true_count[:, None], 1.0)).reshape(-1, height, width)
+        pred_class_maps = (class_pixel_pred_sum / np.maximum(class_pred_count[:, None], 1.0)).reshape(-1, height, width)
+        border_width = int(config.get("loss", {}).get("border_width", graph_cfg.get("border_width", 3)))
+        _save_class_motif_border_mass_csv(
+            true_class_maps,
+            pred_class_maps,
+            class_motif_dir,
+            height=height,
+            width=width,
+            border_width=border_width,
         )
 
     print(f"D6 part masks: {masks_dir}")
