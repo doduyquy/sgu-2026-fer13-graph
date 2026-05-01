@@ -1,462 +1,216 @@
-d6b_class_part_graph_motif_long100.yaml
+configs/experiments/d6c_class_attended_objectives_no_supcon.yaml
 
 =======================================================
-7724.8s	357	TEST SET EVALUATION
-7724.8s	358	=======================================================
-7724.8s	359	Accuracy:    54.64%
-7724.8s	360	Macro F1:    0.5181
-7724.8s	361	Weighted F1: 0.5422
-7724.8s	362	pred_count:  [432, 46, 475, 950, 650, 432, 604]
-7724.8s	363	
-7724.8s	364	Classification report:
-7724.8s	365	Angry          precision=0.4329 recall=0.3809 f1=0.4052 support=491
-7724.8s	366	Disgust        precision=0.5217 recall=0.4364 f1=0.4752 support=55
-7724.8s	367	Fear           precision=0.3768 recall=0.3390 f1=0.3569 support=528
-7724.8s	368	Happy          precision=0.7411 recall=0.8009 f1=0.7698 support=879
-7724.8s	369	Sad            precision=0.3954 recall=0.4327 f1=0.4132 support=594
-7724.8s	370	Surprise       precision=0.6782 recall=0.7043 f1=0.6910 support=416
-7724.8s	371	Neutral        precision=0.5248 recall=0.5064 f1=0.5154 support=626
-7724.8s	372	accuracy       0.5464
-7724.8s	373	macro avg      precision=0.5244 recall=0.5144 f1=0.5181 support=3589
-7724.8s	374	weighted avg   precision=0.5397 recall=0.5464 f1=0.5422 support=3589
-7724.8s	375	Confusion matrix saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/evaluation/confusion_matrix.png
-7724.8s	376	Classification report saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/evaluation/classification_report.txt
-7724.8s	377	Correct examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/evaluation/correct_examples.png
-7724.8s	378	Wrong examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/evaluation/wrong_examples.png
-7724.8s	379	Evaluation outputs: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/evaluation
-7725.9s	380	
-7725.9s	381	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6b_class_part_graph_motif_long100.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6b_class_part_graph_motif_long100/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
-7824.9s	382	--- torch version: 2.10.0+cu128
-7824.9s	383	--- cuda available: True
-7824.9s	384	--- cuda device count: 2
-7824.9s	385	--- selected device: cuda:0
-7824.9s	386	--- gpu name: Tesla T4
-7824.9s	387	--- current cuda device: 0
-7824.9s	388	[FullGraphDataset test]
-7824.9s	389	chunk_cache_size=8
-7824.9s	390	num_chunks=8
-7824.9s	391	num_samples=3589
-7824.9s	392	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7824.9s	393	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7824.9s	394	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_part_masks
-7824.9s	395	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_part_attention
-7824.9s	396	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_slot_summary
-7824.9s	397	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_class_part_attention
-7824.9s	398	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_class_motif_maps
-7826.7s	399	--- torch version: 2.10.0+cu128
-7826.7s	400	--- cuda available: True
-7826.7s	401	--- cuda device count: 2
-7826.7s	402	--- selected device: cuda:0
-7826.7s	403	--- gpu name: Tesla T4
-7826.7s	404	--- current cuda device: 0
-7826.7s	405	[FullGraphDataset test]
-7826.7s	406	chunk_cache_size=8
-7826.7s	407	num_chunks=8
-7826.7s	408	num_samples=3589
-7826.7s	409	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7826.7s	410	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7826.7s	411	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_part_masks
-7826.7s	412	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_part_attention
-7826.7s	413	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_slot_summary
-7826.7s	414	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_class_part_attention
-7826.7s	415	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_long100/figures/d6_class_motif_maps
-7829.7s	416	OUTPUT_DIR: /kaggle/working/outputs/d6b_class_part_graph_motif_long100
-7829.7s	417	best epoch: 97
-7829.7s	418	best val_macro_f1: 0.5197270096351898
-7829.7s	419	lr: 0.00025
-7829.7s	420	lr_after_scheduler: 0.00025
-7829.7s	421	val_diag_class_part_entropy_mean: 2.674235903056322
-7829.7s	422	val_diag_effective_slots: 12.265840361603594
-7829.7s	423	
-7829.7s	424	TEST
-7829.7s	425	accuracy   : 0.5463917525773195
-7829.7s	426	macro_f1   : 0.5181235591550932
-7829.7s	427	weighted_f1: 0.5421550685127945
-7829.7s	428	pred_count : [432, 46, 475, 950, 650, 432, 604]
-7829.7s	429	
-7829.7s	430	 evaluation/confusion_matrix.png
-7829.7s	431	
-7829.7s	432	 figures/d6_slot_summary/slot_area.png
-7829.7s	433	
-7829.7s	434	 figures/d6_slot_summary/slot_similarity.png
-7829.7s	435	
-7829.7s	436	 figures/d6_class_part_attention/class_part_attn_grid.png
-7829.7s	437	
-7829.7s	438	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
-Class attention CSVs:
-7829.7s	441	  figures/d6_class_part_attention/class_part_attention_entropy.csv
-7829.7s	442	  figures/d6_class_part_attention/class_part_attention_similarity.csv
-7829.7s	443	  figures/d6_class_part_attention/top_slots_per_class.csv
-7833.8s	444	ZIP: /kaggle/working/outputs/d6b_class_part_graph_motif_long100.zip
+10189.6s	7423	TEST SET EVALUATION
+10189.6s	7424	=======================================================
+10189.6s	7425	Accuracy:    55.48%
+10189.6s	7426	Macro F1:    0.5133
+10189.6s	7427	Weighted F1: 0.5473
+10189.6s	7428	pred_count:  [313, 85, 495, 990, 551, 381, 774]
+10189.6s	7429	
+10189.6s	7430	Classification report:
+10189.6s	7431	Angry          precision=0.4728 recall=0.3014 f1=0.3682 support=491
+10189.6s	7432	Disgust        precision=0.3294 recall=0.5091 f1=0.4000 support=55
+10189.6s	7433	Fear           precision=0.4101 recall=0.3845 f1=0.3969 support=528
+10189.6s	7434	Happy          precision=0.7222 recall=0.8134 f1=0.7651 support=879
+10189.6s	7435	Sad            precision=0.4446 recall=0.4125 f1=0.4279 support=594
+10189.6s	7436	Surprise       precision=0.7375 recall=0.6755 f1=0.7051 support=416
+10189.6s	7437	Neutral        precision=0.4793 recall=0.5927 f1=0.5300 support=626
+10189.6s	7438	accuracy       0.5548
+10189.6s	7439	macro avg      precision=0.5137 recall=0.5270 f1=0.5133 support=3589
+10189.6s	7440	weighted avg   precision=0.5496 recall=0.5548 f1=0.5473 support=3589
+10189.6s	7441	Confusion matrix saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/evaluation/confusion_matrix.png
+10189.6s	7442	Classification report saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/evaluation/classification_report.txt
+10189.6s	7443	Correct examples saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/evaluation/correct_examples.png
+10189.6s	7444	Wrong examples saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/evaluation/wrong_examples.png
+10189.6s	7445	Evaluation outputs: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/evaluation
+10189.6s	7446	
+10189.6s	7447	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6c_class_attended_objectives_no_supcon.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
+10309.9s	7448	--- torch version: 2.10.0+cu128
+10309.9s	7449	--- cuda available: True
+10309.9s	7450	--- cuda device count: 2
+10309.9s	7451	--- selected device: cuda:0
+10309.9s	7452	--- gpu name: Tesla T4
+10309.9s	7453	--- current cuda device: 0
+10309.9s	7454	[FullGraphDataset test]
+10309.9s	7455	chunk_cache_size=8
+10309.9s	7456	num_chunks=8
+10309.9s	7457	num_samples=3589
+10309.9s	7458	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
+10309.9s	7459	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
+10309.9s	7460	D6 part masks: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_part_masks
+10309.9s	7461	D6 part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_part_attention
+10309.9s	7462	D6 slot summary: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_slot_summary
+10309.9s	7463	D6 class-part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_class_part_attention
+10309.9s	7464	D6 class motif maps: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_class_motif_maps
+10312.3s	7465	--- torch version: 2.10.0+cu128
+10312.3s	7466	--- cuda available: True
+10312.3s	7467	--- cuda device count: 2
+10312.3s	7468	--- selected device: cuda:0
+10312.3s	7469	--- gpu name: Tesla T4
+10312.3s	7470	--- current cuda device: 0
+10312.3s	7471	[FullGraphDataset test]
+10312.3s	7472	chunk_cache_size=8
+10312.3s	7473	num_chunks=8
+10312.3s	7474	num_samples=3589
+10312.3s	7475	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
+10312.3s	7476	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
+10312.3s	7477	D6 part masks: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_part_masks
+10312.3s	7478	D6 part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_part_attention
+10312.3s	7479	D6 slot summary: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_slot_summary
+10312.3s	7480	D6 class-part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_class_part_attention
+10312.3s	7481	D6 class motif maps: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon/figures/d6_class_motif_maps
+10316.6s	7482	OUTPUT_DIR: /kaggle/working/outputs/d6c_class_attended_objectives_no_supcon
+10316.6s	7483	best epoch: 110
+10316.6s	7484	best val_macro_f1: 0.5159546636646634
+10316.6s	7485	lr: 6.25e-05
+10316.6s	7486	lr_group_0: 6.25e-05
+10316.6s	7487	lr_after_scheduler: 6.25e-05
+10316.6s	7488	val_diag_class_part_entropy_mean: 5.234923341632944
+10316.6s	7489	val_diag_effective_slots: 10.085382832890064
+10316.6s	7490	train_loss_class_border: 0.24365752768399795
+10316.6s	7491	train_loss_class_attn_sep: 0.05018743571052095
+10316.6s	7492	train_loss_supcon: 0.0
+10316.6s	7493	val_loss_class_border: 0.24521723020393238
+10316.6s	7494	val_loss_class_attn_sep: 0.043287024033808075
+10316.6s	7495	val_loss_supcon: 0.0
+10316.6s	7496	val_diag_true_class_border_mass_mean: 0.24521723020393238
+10316.6s	7497	val_diag_true_class_border_mass_max: 0.2726297518320843
+10316.6s	7498	val_diag_class_attn_sim_fear_sad: 0.9836572946700375
+10316.6s	7499	val_diag_class_attn_sim_fear_neutral: 0.9448475853531761
+10316.6s	7500	val_diag_class_attn_sim_fear_surprise: 0.9217030812153774
+10316.6s	7501	val_diag_class_attn_sim_sad_neutral: 0.9655411776188201
+10316.6s	7502	val_diag_class_attn_sim_angry_disgust: 0.8085158789052372
+10316.6s	7503	val_diag_supcon_valid_anchors: 0.0
+10316.6s	7504	val_diag_supcon_positive_pairs: 0.0
+10316.6s	7505	
+10316.6s	7506	TEST
+10316.6s	7507	accuracy   : 0.5547506269155754
+10316.6s	7508	macro_f1   : 0.5133197247659952
+10316.6s	7509	weighted_f1: 0.5472754444907704
+10316.6s	7510	pred_count : [313, 85, 495, 990, 551, 381, 774]
+10316.6s	7511	
+10316.6s	7512	 evaluation/confusion_matrix.png
+10316.6s	7513	
+10316.6s	7514	 figures/d6_slot_summary/slot_area.png
+10316.6s	7515	
+10316.6s	7516	 figures/d6_slot_summary/slot_similarity.png
+10316.6s	7517	
 
-
-
-d6b_class_part_graph_motif_long120.yaml
-
-9336.0s	6924	=======================================================
-9336.0s	6925	TEST SET EVALUATION
-9336.0s	6926	=======================================================
-9336.0s	6927	Accuracy:    55.70%
-9336.0s	6928	Macro F1:    0.5376
-9336.0s	6929	Weighted F1: 0.5493
-9336.0s	6930	pred_count:  [360, 63, 430, 974, 591, 421, 750]
-9336.0s	6931	
-9336.0s	6932	Classification report:
-9336.0s	6933	Angry          precision=0.4833 recall=0.3544 f1=0.4089 support=491
-9336.0s	6934	Disgust        precision=0.5238 recall=0.6000 f1=0.5593 support=55
-9336.0s	6935	Fear           precision=0.4186 recall=0.3409 f1=0.3758 support=528
-9336.0s	6936	Happy          precision=0.7166 recall=0.7941 f1=0.7534 support=879
-9336.0s	6937	Sad            precision=0.4078 recall=0.4057 f1=0.4068 support=594
-9336.0s	6938	Surprise       precision=0.7126 recall=0.7212 f1=0.7168 support=416
-9336.0s	6939	Neutral        precision=0.4973 recall=0.5958 f1=0.5422 support=626
-9336.0s	6940	accuracy       0.5570
-9336.0s	6941	macro avg      precision=0.5372 recall=0.5446 f1=0.5376 support=3589
-9336.0s	6942	weighted avg   precision=0.5481 recall=0.5570 f1=0.5493 support=3589
-9336.0s	6943	Confusion matrix saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/evaluation/confusion_matrix.png
-9336.0s	6944	Classification report saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/evaluation/classification_report.txt
-9336.0s	6945	Correct examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/evaluation/correct_examples.png
-9336.0s	6946	Wrong examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/evaluation/wrong_examples.png
-9336.0s	6947	Evaluation outputs: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/evaluation
-9336.0s	6948	
-9336.0s	6949	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6b_class_part_graph_motif_long120.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6b_class_part_graph_motif_long120/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
-9440.4s	6950	--- torch version: 2.10.0+cu128
-9440.4s	6951	--- cuda available: True
-9440.4s	6952	--- cuda device count: 2
-9440.4s	6953	--- selected device: cuda:0
-9440.4s	6954	--- gpu name: Tesla T4
-9440.4s	6955	--- current cuda device: 0
-9440.4s	6956	[FullGraphDataset test]
-9440.4s	6957	chunk_cache_size=8
-9440.4s	6958	num_chunks=8
-9440.4s	6959	num_samples=3589
-9440.4s	6960	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-9440.4s	6961	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-9440.4s	6962	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_part_masks
-9440.4s	6963	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_part_attention
-9440.4s	6964	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_slot_summary
-9440.4s	6965	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_class_part_attention
-9440.4s	6966	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_class_motif_maps
-9442.5s	6967	--- torch version: 2.10.0+cu128
-9442.5s	6968	--- cuda available: True
-9442.5s	6969	--- cuda device count: 2
-9442.5s	6970	--- selected device: cuda:0
-9442.5s	6971	--- gpu name: Tesla T4
-9442.5s	6972	--- current cuda device: 0
-9442.5s	6973	[FullGraphDataset test]
-9442.5s	6974	chunk_cache_size=8
-9442.5s	6975	num_chunks=8
-9442.5s	6976	num_samples=3589
-9442.5s	6977	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-9442.5s	6978	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-9442.5s	6979	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_part_masks
-9442.5s	6980	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_part_attention
-9442.5s	6981	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_slot_summary
-9442.5s	6982	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_class_part_attention
-9442.5s	6983	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_long120/figures/d6_class_motif_maps
-9446.3s	6984	OUTPUT_DIR: /kaggle/working/outputs/d6b_class_part_graph_motif_long120
-9446.3s	6985	best epoch: 119
-9446.3s	6986	best val_macro_f1: 0.5213937040805061
-9446.3s	6987	lr: 6.25e-05
-9446.3s	6988	lr_after_scheduler: 6.25e-05
-9446.3s	6989	val_diag_class_part_entropy_mean: 2.6525229437161335
-9446.3s	6990	val_diag_effective_slots: 12.143227222746452
-9446.3s	6991	
-9446.3s	6992	TEST
-9446.3s	6993	accuracy   : 0.5569796600724436
-9446.3s	6994	macro_f1   : 0.5375937984680562
-9446.3s	6995	weighted_f1: 0.5492840508585967
-9446.3s	6996	pred_count : [360, 63, 430, 974, 591, 421, 750]
-9446.3s	6997	
-9446.3s	6998	 evaluation/confusion_matrix.png
-9446.3s	6999	
-9446.3s	7000	 figures/d6_slot_summary/slot_area.png
-9446.3s	7001	
-9446.3s	7002	 figures/d6_slot_summary/slot_similarity.png
-9446.3s	7003	
-9446.3s	7004	 figures/d6_class_part_attention/class_part_attn_grid.png
-9446.3s	7005	
-9446.3s	7006	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
-9446.3s	7007	
-9446.3s	7008	Class attention CSVs:
-9446.3s	7009	  figures/d6_class_part_attention/class_part_attention_entropy.csv
-9446.3s	7010	  figures/d6_class_part_attention/class_part_attention_similarity.csv
-9446.3s	7011	  figures/d6_class_part_attention/top_slots_per_class.csv
-9451.4s	7012	ZIP: /kaggle/working/outputs/d6b_class_part_graph_motif_long120.zip
-
-
-d6b_class_part_graph_motif_border075.yaml
+configs/experiments/d6c_class_attended_objectives_no_sep.yaml
 TEST SET EVALUATION
-7756.9s	361	=======================================================
-7756.9s	362	Accuracy:    56.06%
-7756.9s	363	Macro F1:    0.5359
-7756.9s	364	Weighted F1: 0.5569
-7756.9s	365	pred_count:  [355, 52, 439, 962, 773, 356, 652]
-7756.9s	366	
-7756.9s	367	Classification report:
-7756.9s	368	Angry          precision=0.4986 recall=0.3605 f1=0.4184 support=491
-7756.9s	369	Disgust        precision=0.5192 recall=0.4909 f1=0.5047 support=55
-7756.9s	370	Fear           precision=0.4077 recall=0.3390 f1=0.3702 support=528
-7756.9s	371	Happy          precision=0.7349 recall=0.8043 f1=0.7681 support=879
-7756.9s	372	Sad            precision=0.4075 recall=0.5303 f1=0.4609 support=594
-7756.9s	373	Surprise       precision=0.7640 recall=0.6538 f1=0.7047 support=416
-7756.9s	374	Neutral        precision=0.5138 recall=0.5351 f1=0.5243 support=626
-7756.9s	375	accuracy       0.5606
-7756.9s	376	macro avg      precision=0.5494 recall=0.5306 f1=0.5359 support=3589
-7756.9s	377	weighted avg   precision=0.5618 recall=0.5606 f1=0.5569 support=3589
-7756.9s	378	Confusion matrix saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/evaluation/confusion_matrix.png
-7756.9s	379	Classification report saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/evaluation/classification_report.txt
-7756.9s	380	Correct examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/evaluation/correct_examples.png
-7756.9s	381	Wrong examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/evaluation/wrong_examples.png
-7756.9s	382	Evaluation outputs: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/evaluation
-7756.9s	383	
-7756.9s	384	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6b_class_part_graph_motif_border075.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6b_class_part_graph_motif_border075/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
-7855.7s	385	--- torch version: 2.10.0+cu128
-7855.7s	386	--- cuda available: True
-7855.7s	387	--- cuda device count: 2
-7855.7s	388	--- selected device: cuda:0
-7855.7s	389	--- gpu name: Tesla T4
-7855.7s	390	--- current cuda device: 0
-7855.7s	391	[FullGraphDataset test]
-7855.7s	392	chunk_cache_size=8
-7855.7s	393	num_chunks=8
-7855.7s	394	num_samples=3589
-7855.7s	395	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7855.7s	396	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7855.7s	397	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_part_masks
-7855.7s	398	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_part_attention
-7855.7s	399	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_slot_summary
-7855.7s	400	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_class_part_attention
-7855.7s	401	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_class_motif_maps
-7857.4s	402	--- torch version: 2.10.0+cu128
-7857.4s	403	--- cuda available: True
-7857.4s	404	--- cuda device count: 2
-7857.4s	405	--- selected device: cuda:0
-7857.4s	406	--- gpu name: Tesla T4
-7857.4s	407	--- current cuda device: 0
-7857.4s	408	[FullGraphDataset test]
-7857.4s	409	chunk_cache_size=8
-7857.4s	410	num_chunks=8
-7857.4s	411	num_samples=3589
-7857.4s	412	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7857.4s	413	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7857.4s	414	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_part_masks
-7857.4s	415	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_part_attention
-7857.4s	416	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_slot_summary
-7857.4s	417	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_class_part_attention
-7857.4s	418	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_border075/figures/d6_class_motif_maps
-7860.4s	419	OUTPUT_DIR: /kaggle/working/outputs/d6b_class_part_graph_motif_border075
-7860.4s	420	best epoch: 93
-7860.4s	421	best val_macro_f1: 0.5214340502039162
-7860.4s	422	lr: 0.0005
-7860.4s	423	lr_after_scheduler: 0.0005
-7860.4s	424	val_diag_class_part_entropy_mean: 2.665753256958143
-7860.4s	425	val_diag_effective_slots: 12.367086250170143
-7860.4s	426	
-7860.4s	427	TEST
-7860.4s	428	accuracy   : 0.5606018389523544
-7860.4s	429	macro_f1   : 0.5358819548647915
-7860.4s	430	weighted_f1: 0.556948551795033
-7860.4s	431	pred_count : [355, 52, 439, 962, 773, 356, 652]
-7860.4s	432	
-7860.4s	433	 evaluation/confusion_matrix.png
-7860.4s	434	
-7860.4s	435	 figures/d6_slot_summary/slot_area.png
-7860.4s	436	
-7860.4s	437	 figures/d6_slot_summary/slot_similarity.png
-7860.4s	438	
-7860.4s	439	 figures/d6_class_part_attention/class_part_attn_grid.png
-7860.4s	440	
-7860.4s	441	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
-7860.4s	442	
-7860.4s	443	Class attention CSVs:
-7860.4s	444	  figures/d6_class_part_attention/class_part_attention_entropy.csv
-7860.4s	445	  figures/d6_class_part_attention/class_part_attention_similarity.csv
-7860.4s	446	  figures/d6_class_part_attention/top_slots_per_class.csv
-7864.6s	447	ZIP: /kaggle/working/outputs/d6b_class_part_graph_motif_border075.zip
+9641.1s	7233	=======================================================
+9641.1s	7234	Accuracy:    55.64%
+9641.1s	7235	Macro F1:    0.5212
+9641.1s	7236	Weighted F1: 0.5490
+9641.1s	7237	pred_count:  [405, 65, 434, 941, 544, 488, 712]
+9641.1s	7238	
+9641.1s	7239	Classification report:
+9641.1s	7240	Angry          precision=0.5062 recall=0.4175 f1=0.4576 support=491
+9641.1s	7241	Disgust        precision=0.4000 recall=0.4727 f1=0.4333 support=55
+9641.1s	7242	Fear           precision=0.4147 recall=0.3409 f1=0.3742 support=528
+9641.1s	7243	Happy          precision=0.7343 recall=0.7861 f1=0.7593 support=879
+9641.1s	7244	Sad            precision=0.4136 recall=0.3788 f1=0.3954 support=594
+9641.1s	7245	Surprise       precision=0.6475 recall=0.7596 f1=0.6991 support=416
+9641.1s	7246	Neutral        precision=0.4972 recall=0.5655 f1=0.5291 support=626
+9641.1s	7247	accuracy       0.5564
+9641.1s	7248	macro avg      precision=0.5162 recall=0.5316 f1=0.5212 support=3589
+9641.1s	7249	weighted avg   precision=0.5465 recall=0.5564 f1=0.5490 support=3589
+9641.1s	7250	Confusion matrix saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/evaluation/confusion_matrix.png
+9641.1s	7251	Classification report saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/evaluation/classification_report.txt
+9641.1s	7252	Correct examples saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/evaluation/correct_examples.png
+9641.1s	7253	Wrong examples saved: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/evaluation/wrong_examples.png
+9641.1s	7254	Evaluation outputs: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/evaluation
+9641.1s	7255	
+9641.1s	7256	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6c_class_attended_objectives_no_sep.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
+9735.6s	7257	--- torch version: 2.10.0+cu128
+9735.6s	7258	--- cuda available: True
+9735.6s	7259	--- cuda device count: 2
+9735.6s	7260	--- selected device: cuda:0
+9735.6s	7261	--- gpu name: Tesla T4
+9735.6s	7262	--- current cuda device: 0
+9735.6s	7263	[FullGraphDataset test]
+9735.6s	7264	chunk_cache_size=8
+9735.6s	7265	num_chunks=8
+9735.6s	7266	num_samples=3589
+9735.6s	7267	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
+9735.6s	7268	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
+9735.6s	7269	D6 part masks: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_part_masks
+9735.6s	7270	D6 part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_part_attention
+9735.6s	7271	D6 slot summary: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_slot_summary
+9735.6s	7272	D6 class-part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_class_part_attention
+9735.6s	7273	D6 class motif maps: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_class_motif_maps
+9737.7s	7274	--- torch version: 2.10.0+cu128
+9737.7s	7275	--- cuda available: True
+9737.7s	7276	--- cuda device count: 2
+9737.7s	7277	--- selected device: cuda:0
+9737.7s	7278	--- gpu name: Tesla T4
+9737.7s	7279	--- current cuda device: 0
+9737.7s	7280	[FullGraphDataset test]
+9737.7s	7281	chunk_cache_size=8
+9737.7s	7282	num_chunks=8
+9737.7s	7283	num_samples=3589
+9737.7s	7284	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
+9737.7s	7285	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
+9737.7s	7286	D6 part masks: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_part_masks
+9737.7s	7287	D6 part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_part_attention
+9737.7s	7288	D6 slot summary: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_slot_summary
+9737.7s	7289	D6 class-part attention: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_class_part_attention
+9737.7s	7290	D6 class motif maps: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep/figures/d6_class_motif_maps
+9741.5s	7291	OUTPUT_DIR: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep
+9741.5s	7292	best epoch: 109
+9741.5s	7293	best val_macro_f1: 0.523310236573126
+9741.5s	7294	lr: 0.000125
+9741.5s	7295	lr_group_0: 0.000125
+9741.5s	7296	lr_after_scheduler: 0.000125
+9741.5s	7297	val_diag_class_part_entropy_mean: 4.756486555116367
+9741.5s	7298	val_diag_effective_slots: 11.360884084110767
+9741.5s	7299	train_loss_class_border: 0.20043346715505286
+9741.5s	7300	train_loss_class_attn_sep: 0.0
+9741.5s	7301	train_loss_supcon: 1.774403436139826
+9741.5s	7302	val_loss_class_border: 0.19265053757524067
+9741.5s	7303	val_loss_class_attn_sep: 0.0
+9741.5s	7304	val_loss_supcon: 1.8711023921460177
+9741.5s	7305	val_diag_true_class_border_mass_mean: 0.19265053757524067
+9741.5s	7306	val_diag_true_class_border_mass_max: 0.27658189437558167
+9741.5s	7307	val_diag_class_attn_sim_fear_sad: 0.8154317130029729
+9741.5s	7308	val_diag_class_attn_sim_fear_neutral: 0.6912845626341558
+9741.5s	7309	val_diag_class_attn_sim_fear_surprise: 0.6466473298790181
+9741.5s	7310	val_diag_class_attn_sim_sad_neutral: 0.7867774710191034
+9741.5s	7311	val_diag_class_attn_sim_angry_disgust: 0.8671060389122077
+9741.5s	7312	val_diag_supcon_valid_anchors: 31.23008849557522
+9741.5s	7313	val_diag_supcon_positive_pairs: 172.28318584070797
+9741.5s	7314	
+9741.5s	7315	TEST
+9741.5s	7316	accuracy   : 0.5564224017832266
+9741.5s	7317	macro_f1   : 0.5211681798405816
+9741.5s	7318	weighted_f1: 0.5490450625370148
+9741.5s	7319	pred_count : [405, 65, 434, 941, 544, 488, 712]
+9741.5s	7320	
+9741.5s	7321	 evaluation/confusion_matrix.png
+9741.5s	7322	
+9741.5s	7323	 figures/d6_slot_summary/slot_area.png
+9741.5s	7324	
+9741.5s	7325	 figures/d6_slot_summary/slot_similarity.png
+9741.5s	7326	
+9741.5s	7327	 figures/d6_class_part_attention/class_part_attn_grid.png
+9741.5s	7328	
+9741.5s	7329	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
+9741.5s	7330	
+9741.5s	7331	 figures/d6_class_motif_maps/class_pixel_motif_trueclass_avg.png
+9741.5s	7332	
+9741.5s	7333	 figures/d6_class_motif_maps/class_pixel_motif_predclass_avg.png
+9741.5s	7334	
+9741.5s	7335	Class attention CSVs:
+9741.5s	7336	  figures/d6_class_part_attention/class_part_attention_entropy.csv
+9741.5s	7337	  figures/d6_class_part_attention/class_part_attention_similarity.csv
+9741.5s	7338	  figures/d6_class_part_attention/confusion_pair_attention_similarity.csv
+9741.5s	7339	  figures/d6_class_part_attention/top_slots_per_class.csv
+9741.5s	7340	
+9741.5s	7341	Class motif CSVs:
+9741.5s	7342	  figures/d6_class_motif_maps/class_motif_border_mass_by_class.csv
+9741.5s	7343	  figures/d6_class_motif_maps/true_class_border_mass_by_class.csv
+9746.5s	7344	ZIP: /kaggle/working/outputs/d6c_class_attended_objectives_no_sep.zip
 
 
-d6b_class_part_graph_motif_border010.yaml
-8570.1s	7977	
-8570.1s	7978	=======================================================
-8570.1s	7979	TEST SET EVALUATION
-8570.1s	7980	=======================================================
-8570.1s	7981	Accuracy:    53.47%
-8570.1s	7982	Macro F1:    0.4982
-8570.1s	7983	Weighted F1: 0.5297
-8570.1s	7984	pred_count:  [310, 80, 462, 960, 826, 419, 532]
-8570.1s	7985	
-8570.1s	7986	Classification report:
-8570.1s	7987	Angry          precision=0.4710 recall=0.2974 f1=0.3645 support=491
-8570.1s	7988	Disgust        precision=0.3375 recall=0.4909 f1=0.4000 support=55
-8570.1s	7989	Fear           precision=0.3831 recall=0.3352 f1=0.3576 support=528
-8570.1s	7990	Happy          precision=0.7156 recall=0.7816 f1=0.7471 support=879
-8570.1s	7991	Sad            precision=0.3692 recall=0.5135 f1=0.4296 support=594
-8570.1s	7992	Surprise       precision=0.6850 recall=0.6899 f1=0.6874 support=416
-8570.1s	7993	Neutral        precision=0.5451 recall=0.4633 f1=0.5009 support=626
-8570.1s	7994	accuracy       0.5347
-8570.1s	7995	macro avg      precision=0.5009 recall=0.5102 f1=0.4982 support=3589
-8570.1s	7996	weighted avg   precision=0.5368 recall=0.5347 f1=0.5297 support=3589
-8570.1s	7997	Confusion matrix saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/evaluation/confusion_matrix.png
-8570.1s	7998	Classification report saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/evaluation/classification_report.txt
-8570.1s	7999	Correct examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/evaluation/correct_examples.png
-8570.1s	8000	Wrong examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/evaluation/wrong_examples.png
-8570.1s	8001	Evaluation outputs: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/evaluation
-8571.6s	8002	
-8571.6s	8003	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6b_class_part_graph_motif_border010.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6b_class_part_graph_motif_border010/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
-8700.8s	8004	--- torch version: 2.10.0+cu128
-8700.8s	8005	--- cuda available: True
-8700.8s	8006	--- cuda device count: 2
-8700.8s	8007	--- selected device: cuda:0
-8700.8s	8008	--- gpu name: Tesla T4
-8700.8s	8009	--- current cuda device: 0
-8700.8s	8010	[FullGraphDataset test]
-8700.8s	8011	chunk_cache_size=8
-8700.8s	8012	num_chunks=8
-8700.8s	8013	num_samples=3589
-8700.8s	8014	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-8700.8s	8015	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-8700.8s	8016	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_part_masks
-8700.8s	8017	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_part_attention
-8700.8s	8018	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_slot_summary
-8700.8s	8019	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_class_part_attention
-8700.8s	8020	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_class_motif_maps
-8702.9s	8021	--- torch version: 2.10.0+cu128
-8702.9s	8022	--- cuda available: True
-8702.9s	8023	--- cuda device count: 2
-8702.9s	8024	--- selected device: cuda:0
-8702.9s	8025	--- gpu name: Tesla T4
-8702.9s	8026	--- current cuda device: 0
-8702.9s	8027	[FullGraphDataset test]
-8702.9s	8028	chunk_cache_size=8
-8702.9s	8029	num_chunks=8
-8702.9s	8030	num_samples=3589
-8702.9s	8031	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-8702.9s	8032	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-8702.9s	8033	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_part_masks
-8702.9s	8034	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_part_attention
-8702.9s	8035	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_slot_summary
-8702.9s	8036	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_class_part_attention
-8702.9s	8037	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_border010/figures/d6_class_motif_maps
-8706.8s	8038	OUTPUT_DIR: /kaggle/working/outputs/d6b_class_part_graph_motif_border010
-8706.8s	8039	best epoch: 76
-8706.8s	8040	best val_macro_f1: 0.5021345355577055
-8706.8s	8041	lr: 0.00025
-8706.8s	8042	lr_after_scheduler: 0.00025
-8706.8s	8043	val_diag_class_part_entropy_mean: 2.6410724610353995
-8706.8s	8044	val_diag_effective_slots: 10.956435152914672
-8706.8s	8045	
-8706.8s	8046	TEST
-8706.8s	8047	accuracy   : 0.5346893285037615
-8706.8s	8048	macro_f1   : 0.49816163387513174
-8706.8s	8049	weighted_f1: 0.5297326119825204
-8706.8s	8050	pred_count : [310, 80, 462, 960, 826, 419, 532]
-8706.8s	8051	
-8706.8s	8052	 evaluation/confusion_matrix.png
-8706.8s	8053	
-8706.8s	8054	 figures/d6_slot_summary/slot_area.png
-8706.8s	8055	
-8706.8s	8056	 figures/d6_slot_summary/slot_similarity.png
-8706.8s	8057	
-8706.8s	8058	 figures/d6_class_part_attention/class_part_attn_grid.png
-8706.8s	8059	
-8706.8s	8060	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
-8706.8s	8061	
-8706.8s	8062	Class attention CSVs:
-8706.8s	8063	  figures/d6_class_part_attention/class_part_attention_entropy.csv
-8706.8s	8064	  figures/d6_class_part_attention/class_part_attention_similarity.csv
-8706.8s	8065	  figures/d6_class_part_attention/top_slots_per_class.csv
-8712.0s	8066	ZIP: /kaggle/working/outputs/d6b_class_part_graph_motif_border010.zip
-
-
-
-
-d6b_class_part_graph_motif_balance015.yaml
-
-7851.0s	394	TEST SET EVALUATION
-7851.0s	395	=======================================================
-7851.0s	396	Accuracy:    53.22%
-7851.0s	397	Macro F1:    0.5084
-7851.0s	398	Weighted F1: 0.5328
-7851.0s	399	pred_count:  [406, 78, 466, 869, 752, 406, 612]
-7851.0s	400	
-7851.0s	401	Classification report:
-7851.0s	402	Angry          precision=0.4236 recall=0.3503 f1=0.3835 support=491
-7851.0s	403	Disgust        precision=0.3846 recall=0.5455 f1=0.4511 support=55
-7851.0s	404	Fear           precision=0.3948 recall=0.3485 f1=0.3702 support=528
-7851.0s	405	Happy          precision=0.7514 recall=0.7429 f1=0.7471 support=879
-7851.0s	406	Sad            precision=0.3524 recall=0.4461 f1=0.3938 support=594
-7851.0s	407	Surprise       precision=0.7044 recall=0.6875 f1=0.6959 support=416
-7851.0s	408	Neutral        precision=0.5229 recall=0.5112 f1=0.5170 support=626
-7851.0s	409	accuracy       0.5322
-7851.0s	410	macro avg      precision=0.5049 recall=0.5188 f1=0.5084 support=3589
-7851.0s	411	weighted avg   precision=0.5372 recall=0.5322 f1=0.5328 support=3589
-7851.0s	412	Confusion matrix saved: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/evaluation/confusion_matrix.png
-7851.0s	413	Classification report saved: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/evaluation/classification_report.txt
-7851.0s	414	Correct examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/evaluation/correct_examples.png
-7851.0s	415	Wrong examples saved: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/evaluation/wrong_examples.png
-7851.0s	416	Evaluation outputs: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/evaluation
-7852.2s	417	
-7852.2s	418	$ /usr/bin/python3 scripts/visualize_d6.py --config configs/experiments/d6b_class_part_graph_motif_balance015.yaml --environment kaggle --checkpoint /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/checkpoints/best.pth --graph_repo_path /kaggle/input/datasets/irthn1311/graph-repo/graph_repo --max_samples 32 --device cuda:0 --chunk_cache_size 8
-7957.8s	419	--- torch version: 2.10.0+cu128
-7957.8s	420	--- cuda available: True
-7957.8s	421	--- cuda device count: 2
-7957.8s	422	--- selected device: cuda:0
-7957.8s	423	--- gpu name: Tesla T4
-7957.8s	424	--- current cuda device: 0
-7957.8s	425	[FullGraphDataset test]
-7957.8s	426	chunk_cache_size=8
-7957.8s	427	num_chunks=8
-7957.8s	428	num_samples=3589
-7957.8s	429	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7957.8s	430	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7957.8s	431	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_part_masks
-7957.8s	432	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_part_attention
-7957.8s	433	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_slot_summary
-7957.8s	434	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_class_part_attention
-7957.8s	435	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_class_motif_maps
-7959.6s	436	--- torch version: 2.10.0+cu128
-7959.6s	437	--- cuda available: True
-7959.6s	438	--- cuda device count: 2
-7959.6s	439	--- selected device: cuda:0
-7959.6s	440	--- gpu name: Tesla T4
-7959.6s	441	--- current cuda device: 0
-7959.6s	442	[FullGraphDataset test]
-7959.6s	443	chunk_cache_size=8
-7959.6s	444	num_chunks=8
-7959.6s	445	num_samples=3589
-7959.6s	446	[FullGraphDataset test] chunk cache enabled (max_chunks=8)
-7959.6s	447	[DataLoader split=test] batch_size=32 num_workers=0 pin_memory=False persistent_workers=False prefetch_factor=None chunk_aware_shuffle=False
-7959.6s	448	D6 part masks: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_part_masks
-7959.6s	449	D6 part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_part_attention
-7959.6s	450	D6 slot summary: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_slot_summary
-7959.6s	451	D6 class-part attention: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_class_part_attention
-7959.6s	452	D6 class motif maps: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015/figures/d6_class_motif_maps
-7962.7s	453	OUTPUT_DIR: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015
-7962.7s	454	best epoch: 95
-7962.7s	455	best val_macro_f1: 0.5120271511961604
-7962.7s	456	lr: 0.000125
-7962.7s	457	lr_after_scheduler: 0.000125
-7962.7s	458	val_diag_class_part_entropy_mean: 2.6614587602362167
-7962.7s	459	val_diag_effective_slots: 12.444233978744101
-7962.7s	460	
-7962.7s	461	TEST
-7962.7s	462	accuracy   : 0.5321816662022848
-7962.7s	463	macro_f1   : 0.5083678814372676
-7962.7s	464	weighted_f1: 0.5328265360421731
-7962.7s	465	pred_count : [406, 78, 466, 869, 752, 406, 612]
-7962.7s	466	
-7962.7s	467	 evaluation/confusion_matrix.png
-7962.7s	468	
-7962.7s	469	 figures/d6_slot_summary/slot_area.png
-7962.7s	470	
-7962.7s	471	 figures/d6_slot_summary/slot_similarity.png
-7962.7s	472	
-7962.7s	473	 figures/d6_class_part_attention/class_part_attn_grid.png
-7962.7s	474	
-7962.7s	475	 figures/d6_class_part_attention/class_part_attn_avg_by_true_class.png
-7962.7s	476	
-7962.7s	477	Class attention CSVs:
-7962.7s	478	  figures/d6_class_part_attention/class_part_attention_entropy.csv
-7962.7s	479	  figures/d6_class_part_attention/class_part_attention_similarity.csv
-7962.7s	480	  figures/d6_class_part_attention/top_slots_per_class.csv
-7967.2s	481	ZIP: /kaggle/working/outputs/d6b_class_part_graph_motif_balance015.zip
+configs/experiments/d6c_class_attended_objectives_border_only.yaml

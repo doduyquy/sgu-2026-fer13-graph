@@ -5,6 +5,28 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List
 
+NODE_FEATURE_NAMES_V1 = [
+    "intensity",
+    "x_norm",
+    "y_norm",
+    "gx",
+    "gy",
+    "grad_mag",
+    "local_contrast",
+]
+
+NODE_FEATURE_NAMES_V2 = [
+    *NODE_FEATURE_NAMES_V1,
+    "grad_ori_cos",
+    "grad_ori_sin",
+    "local_mean_5x5",
+    "local_std_5x5",
+    "border_distance",
+]
+
+EDGE_STATIC_FEATURE_NAMES = ["dx", "dy", "dist"]
+EDGE_DYNAMIC_FEATURE_NAMES = ["delta_intensity", "intensity_similarity"]
+
 
 @dataclass
 class GraphConfig:
@@ -15,21 +37,13 @@ class GraphConfig:
     connectivity: int = 8
     normalize_pixels: bool = True
     node_feature_names: List[str] = field(
-        default_factory=lambda: [
-            "intensity",
-            "x_norm",
-            "y_norm",
-            "gx",
-            "gy",
-            "grad_mag",
-            "local_contrast",
-        ]
+        default_factory=lambda: list(NODE_FEATURE_NAMES_V1)
     )
     edge_static_feature_names: List[str] = field(
-        default_factory=lambda: ["dx", "dy", "dist"]
+        default_factory=lambda: list(EDGE_STATIC_FEATURE_NAMES)
     )
     edge_dynamic_feature_names: List[str] = field(
-        default_factory=lambda: ["delta_intensity", "intensity_similarity"]
+        default_factory=lambda: list(EDGE_DYNAMIC_FEATURE_NAMES)
     )
     intensity_similarity_alpha: float = 1.0
     chunk_size: int = 500

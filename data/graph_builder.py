@@ -141,6 +141,9 @@ class PixelGraphBuilder:
     def _build_node_features(self, image: np.ndarray) -> np.ndarray:
         gx, gy, grad_mag = self.compute_gradients(image)
         local_contrast = self.compute_local_contrast(image)
+        grad_ori_cos, grad_ori_sin = self.compute_gradient_orientation(gx, gy, grad_mag)
+        local_mean_5x5, local_std_5x5 = self.compute_local_mean_std(image, window_size=5)
+        border_distance = self.compute_border_distance(self.height, self.width)
         feature_map = {
             "intensity": image.reshape(-1),
             "x_norm": self._x_norm,
@@ -149,7 +152,15 @@ class PixelGraphBuilder:
             "gy": gy.reshape(-1),
             "grad_mag": grad_mag.reshape(-1),
             "local_contrast": local_contrast.reshape(-1),
+            "grad_ori_cos": grad_ori_cos.reshape(-1),
+            "grad_ori_sin": grad_ori_sin.reshape(-1),
+            "local_mean_5x5": local_mean_5x5.reshape(-1),
+            "local_std_5x5": local_std_5x5.reshape(-1),
+            "border_distance": border_distance.reshape(-1),
         }
+        missing = [name for name in self.config.node_feature_names if name not in feature_map]
+        if missing:
+            raise ValueError(f"Unsupported node feature names: {missing}")
         features = np.stack(
             [feature_map[name] for name in self.config.node_feature_names],
             axis=1,
@@ -177,6 +188,20 @@ class PixelGraphBuilder:
         return gx, gy, grad_mag
 
     @staticmethod
+    def compute_gradient_orientation(
+        gx: np.ndarray,
+        gy: np.ndarray,
+        grad_mag: np.ndarray,
+        eps: float = 1e-6,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        denom = grad_mag + float(eps)
+        cos = np.divide(gx, denom, out=np.zeros_like(gx, dtype=np.float32), where=denom > 0.0)
+        sin = np.divide(gy, denom, out=np.zeros_like(gy, dtype=np.float32), where=denom > 0.0)
+        cos = np.clip(cos, -1.0, 1.0).astype(np.float32)
+        sin = np.clip(sin, -1.0, 1.0).astype(np.float32)
+        return cos, sin
+
+    @staticmethod
     def compute_local_contrast(img: np.ndarray, window_size: int = 3) -> np.ndarray:
         pad = window_size // 2
         padded = np.pad(img, pad_width=pad, mode="edge")
@@ -186,6 +211,34 @@ class PixelGraphBuilder:
                 local_sum += padded[dy : dy + img.shape[0], dx : dx + img.shape[1]]
         local_mean = local_sum / float(window_size * window_size)
         return np.abs(img - local_mean).astype(np.float32)
+
+    @staticmethod
+    def compute_local_mean_std(img: np.ndarray, window_size: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+        pad = window_size // 2
+        padded = np.pad(img, pad_width=pad, mode="reflect")
+        local_sum = np.zeros_like(img, dtype=np.float32)
+        local_sumsq = np.zeros_like(img, dtype=np.float32)
+        for dy in range(window_size):
+            for dx in range(window_size):
+                patch = padded[dy : dy + img.shape[0], dx : dx + img.shape[1]]
+                local_sum += patch
+                local_sumsq += patch * patch
+        denom = float(window_size * window_size)
+        local_mean = local_sum / denom
+        variance = np.maximum(local_sumsq / denom - local_mean * local_mean, 0.0)
+        local_std = np.sqrt(variance).astype(np.float32)
+        return np.clip(local_mean, 0.0, 1.0).astype(np.float32), local_std
+
+    @staticmethod
+    def compute_border_distance(height: int, width: int) -> np.ndarray:
+        yy, xx = np.meshgrid(
+            np.arange(height, dtype=np.float32),
+            np.arange(width, dtype=np.float32),
+            indexing="ij",
+        )
+        distance = np.minimum.reduce([yy, xx, float(height - 1) - yy, float(width - 1) - xx])
+        max_distance = max(float(min(height, width) // 2 - 1), 1.0)
+        return np.clip(distance / max_distance, 0.0, 1.0).astype(np.float32)
 
     def _build_dynamic_edge_attrs(self, image: np.ndarray) -> np.ndarray:
         flat = image.reshape(-1)

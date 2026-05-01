@@ -49,6 +49,13 @@ class GraphRepositoryWriter:
             "chunk_size": int(config.chunk_size),
             "built_at": datetime.now(timezone.utc).isoformat(),
             "config": config.to_dict(),
+            "node_feature_names": list(config.node_feature_names),
+            "edge_feature_names": list(config.edge_static_feature_names)
+            + list(config.edge_dynamic_feature_names),
+            "node_dim": int(len(config.node_feature_names)),
+            "edge_dim": int(len(config.edge_static_feature_names) + len(config.edge_dynamic_feature_names)),
+            "height": int(config.height),
+            "width": int(config.width),
             "splits": {},
         }
 

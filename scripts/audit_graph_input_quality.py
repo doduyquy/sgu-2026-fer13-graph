@@ -29,6 +29,7 @@ for path in (SCRIPT_DIR, PROJECT_ROOT):
 
 from common import load_config, resolve_path
 from data.full_graph_dataset import FullGraphDataset, collate_fn_full_graph
+from data.graph_repository import GraphRepositoryReader
 from data.labels import EMOTION_NAMES, NUM_CLASSES
 
 
@@ -51,6 +52,43 @@ EDGE_FEATURE_NAMES = [
 SPLITS = ("train", "val", "test")
 PERCENTILES = [0.1, 1, 5, 25, 50, 75, 95, 99, 99.9]
 EPS = 1e-12
+
+
+def infer_feature_names(graph_repo_path: Path) -> Tuple[List[str], List[str]]:
+    reader = GraphRepositoryReader(graph_repo_path)
+    manifest = reader.manifest
+    node_names = manifest.get("node_feature_names")
+    edge_names = manifest.get("edge_feature_names")
+    config = manifest.get("config", {}) if isinstance(manifest.get("config", {}), dict) else {}
+    if not node_names:
+        node_names = config.get("node_feature_names")
+    if not edge_names:
+        static = config.get("edge_static_feature_names")
+        dynamic = config.get("edge_dynamic_feature_names")
+        if static or dynamic:
+            edge_names = list(static or []) + list(dynamic or [])
+    if not edge_names:
+        shared = reader.load_shared()
+        edge_names = list(shared.static_feature_names)
+        try:
+            first_split = next(split for split in SPLITS if reader.chunk_paths(split))
+            first_chunk = reader.load_chunk(first_split, 0)
+            if first_chunk:
+                edge_names.extend(list(first_chunk[0].dynamic_feature_names))
+        except StopIteration:
+            pass
+    if not node_names:
+        try:
+            first_split = next(split for split in SPLITS if reader.chunk_paths(split))
+            first_chunk = reader.load_chunk(first_split, 0)
+            if first_chunk and first_chunk[0].node_feature_names:
+                node_names = list(first_chunk[0].node_feature_names)
+            elif first_chunk:
+                dim = int(first_chunk[0].node_features.shape[-1])
+                node_names = NODE_FEATURE_NAMES[:dim] if dim <= len(NODE_FEATURE_NAMES) else [f"node_feature_{i}" for i in range(dim)]
+        except StopIteration:
+            pass
+    return list(node_names or NODE_FEATURE_NAMES), list(edge_names or EDGE_FEATURE_NAMES)
 
 
 def parse_bool(value: str | bool) -> bool:
@@ -642,10 +680,15 @@ def finalize_integrity(
         info["class_counts"] = {str(k): int(v) for k, v in sorted(info["class_counts"].items())}
         if "2304" not in [str(v) for v in info["num_nodes_unique"]]:
             warnings.append(f"{split}: num_nodes unique is {info['num_nodes_unique']}, expected 2304")
-        if info["edge_dim_unique"] != [5]:
-            warnings.append(f"{split}: edge_dim unique is {info['edge_dim_unique']}, expected 5")
-        if not any(str(shape).endswith("7") or shape == "2304x7" for shape in info["node_feature_shape_unique"]):
-            warnings.append(f"{split}: node feature shapes {info['node_feature_shape_unique']} do not match [2304,7]")
+        expected_edge_dim = len(EDGE_FEATURE_NAMES)
+        expected_node_dim = len(NODE_FEATURE_NAMES)
+        if info["edge_dim_unique"] != [expected_edge_dim]:
+            warnings.append(f"{split}: edge_dim unique is {info['edge_dim_unique']}, expected {expected_edge_dim}")
+        expected_shape = f"2304x{expected_node_dim}"
+        if expected_shape not in info["node_feature_shape_unique"]:
+            warnings.append(
+                f"{split}: node feature shapes {info['node_feature_shape_unique']} do not match [{expected_shape}]"
+            )
         if info["labels_invalid"] > 0:
             warnings.append(f"{split}: found {info['labels_invalid']} labels outside 0..6")
         if info["edge_index_mismatch_batches"] > 0:
@@ -707,6 +750,11 @@ def add_range_warnings(
         "gy": (-1.0, 1.0),
         "grad_mag": (0.0, 1.0),
         "local_contrast": (0.0, 1.0),
+        "grad_ori_cos": (-1.0, 1.0),
+        "grad_ori_sin": (-1.0, 1.0),
+        "local_mean_5x5": (0.0, 1.0),
+        "local_std_5x5": (0.0, 1.0),
+        "border_distance": (0.0, 1.0),
     }
     expected_edge = {
         "dx": (-1.0, 1.0),
@@ -717,10 +765,10 @@ def add_range_warnings(
     }
     for split, acc in node_split_accs.items():
         for idx, name in enumerate(NODE_FEATURE_NAMES):
-            lo, hi = expected_node[name]
-            if acc.min[idx] < lo - 1e-4 or acc.max[idx] > hi + 1e-4:
+            lo_hi = expected_node.get(name)
+            if lo_hi is not None and (acc.min[idx] < lo_hi[0] - 1e-4 or acc.max[idx] > lo_hi[1] + 1e-4):
                 warnings.append(
-                    f"{split}: node {name} range [{acc.min[idx]:.6g}, {acc.max[idx]:.6g}] outside expected [{lo}, {hi}]"
+                    f"{split}: node {name} range [{acc.min[idx]:.6g}, {acc.max[idx]:.6g}] outside expected [{lo_hi[0]}, {lo_hi[1]}]"
                 )
             mean, std = acc.mean_std_by_feature()[name]
             if std < 1e-7:
@@ -729,10 +777,10 @@ def add_range_warnings(
                 warnings.append(f"{split}: node {name} has unusually large std={std:.6g}")
     for split, acc in edge_split_accs.items():
         for idx, name in enumerate(EDGE_FEATURE_NAMES):
-            lo, hi = expected_edge[name]
-            if acc.min[idx] < lo - 1e-4 or acc.max[idx] > hi + 1e-4:
+            lo_hi = expected_edge.get(name)
+            if lo_hi is not None and (acc.min[idx] < lo_hi[0] - 1e-4 or acc.max[idx] > lo_hi[1] + 1e-4):
                 warnings.append(
-                    f"{split}: edge {name} range [{acc.min[idx]:.6g}, {acc.max[idx]:.6g}] outside expected [{lo:.6g}, {hi:.6g}]"
+                    f"{split}: edge {name} range [{acc.min[idx]:.6g}, {acc.max[idx]:.6g}] outside expected [{lo_hi[0]:.6g}, {lo_hi[1]:.6g}]"
                 )
             mean, std = acc.mean_std_by_feature()[name]
             if name in {"dx", "dy", "dist"} and std < 1e-7:
@@ -869,16 +917,27 @@ def save_feature_map_samples(output_dir: Path, sample_reservoir: SampleReservoir
         return err
     assert plt is not None
     out_dir = ensure_dir(output_dir / "figures" / "feature_maps_samples")
+    preferred_panels = [
+        ("intensity", "gray"),
+        ("gx", "coolwarm"),
+        ("gy", "coolwarm"),
+        ("grad_mag", "magma"),
+        ("local_contrast", "viridis"),
+        ("grad_ori_cos", "coolwarm"),
+        ("grad_ori_sin", "coolwarm"),
+        ("local_mean_5x5", "gray"),
+        ("local_std_5x5", "viridis"),
+        ("border_distance", "viridis"),
+    ]
     panels = [
-        ("intensity", 0, "gray"),
-        ("gx", 3, "coolwarm"),
-        ("gy", 4, "coolwarm"),
-        ("grad_mag", 5, "magma"),
-        ("local_contrast", 6, "viridis"),
+        (name, NODE_FEATURE_NAMES.index(name), cmap)
+        for name, cmap in preferred_panels
+        if name in NODE_FEATURE_NAMES
     ]
     for item in sample_reservoir.all_samples():
         x = item["x"].reshape(height, width, -1).numpy()
-        fig, axes = plt.subplots(1, len(panels), figsize=(14, 3))
+        fig, axes = plt.subplots(1, len(panels), figsize=(max(14, len(panels) * 2.8), 3))
+        axes = np.asarray(axes).reshape(-1)
         for ax, (name, idx, cmap) in zip(axes, panels):
             im = ax.imshow(x[:, :, idx], cmap=cmap)
             ax.set_title(name)
@@ -1158,6 +1217,8 @@ def write_report(
 
 
 def run_audit(args: argparse.Namespace) -> None:
+    global NODE_FEATURE_NAMES, EDGE_FEATURE_NAMES
+
     random.seed(int(args.seed))
     np.random.seed(int(args.seed))
     torch.manual_seed(int(args.seed))
@@ -1168,6 +1229,7 @@ def run_audit(args: argparse.Namespace) -> None:
     )
     if graph_repo_path is None:
         raise FileNotFoundError("Could not resolve graph_repo_path")
+    NODE_FEATURE_NAMES, EDGE_FEATURE_NAMES = infer_feature_names(graph_repo_path)
     output_dir = ensure_dir(Path(args.output_dir))
     figures_root = output_dir / "figures"
     for rel in (
@@ -1185,6 +1247,8 @@ def run_audit(args: argparse.Namespace) -> None:
     print(f"[Audit] graph_repo_path={graph_repo_path}")
     print(f"[Audit] output_dir={output_dir}")
     print(f"[Audit] max_samples_per_split={args.max_samples_per_split}")
+    print(f"[Audit] node_dim={len(NODE_FEATURE_NAMES)} edge_dim={len(EDGE_FEATURE_NAMES)}")
+    print(f"[Audit] node_feature_names={NODE_FEATURE_NAMES}")
 
     loaders = build_dataloaders(
         config=config,
