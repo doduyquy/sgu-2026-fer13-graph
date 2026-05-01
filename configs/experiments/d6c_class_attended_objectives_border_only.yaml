@@ -19,3 +19,6 @@ loss:
   lambda_class_attn_sep: 0.0
   lambda_supcon: 0.0
   lambda_class_border: 0.0025
+
+training:
+  epochs: 120

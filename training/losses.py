@@ -457,7 +457,7 @@ class D6ClassAttendedMotifLoss(D6HierarchicalMotifLoss):
             if pair_name is not None:
                 diag[f"diag_class_attn_sim_{pair_name}"] = sim.detach()
 
-        if not penalties:
+        if not penalties or self.lambda_class_attn_sep <= 0.0:
             return zero, diag
         return torch.stack(penalties).mean().to(dtype=logits.dtype), diag
 
@@ -474,6 +474,8 @@ class D6ClassAttendedMotifLoss(D6HierarchicalMotifLoss):
             "diag_supcon_positive_pairs": zero,
         }
         if not torch.is_tensor(class_repr) or class_repr.shape[0] <= 1:
+            return zero, diag
+        if self.lambda_supcon <= 0.0:
             return zero, diag
 
         rows = torch.arange(y.shape[0], device=y.device)

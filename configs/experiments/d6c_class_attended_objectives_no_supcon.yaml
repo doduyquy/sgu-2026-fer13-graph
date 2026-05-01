@@ -17,3 +17,6 @@ environments:
 
 loss:
   lambda_supcon: 0.0
+
+training:
+  epochs: 120
