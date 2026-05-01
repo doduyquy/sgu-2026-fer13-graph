@@ -514,6 +514,88 @@ class D6ClassAttendedMotifLoss(D6HierarchicalMotifLoss):
         return tuple(pairs)
 
 
+class D7DualBranchMotifLoss(D6HierarchicalMotifLoss):
+    """D7 fused CE, optional branch auxiliary CE, and D6B slot regularizers."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        cfg = dict(config)
+        cfg.setdefault("border_loss_type", "slot_ratio")
+        cfg.setdefault("slot_balance_type", "kl_uniform")
+        super().__init__(cfg)
+        self.lambda_aux_d6 = float(cfg.get("lambda_aux_d6", 0.2))
+        self.lambda_aux_swin = float(cfg.get("lambda_aux_swin", 0.2))
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        logits = model_out["logits"]
+        y = y.long()
+        zero = logits.new_zeros(())
+
+        loss_ce = self.ce(logits, y)
+        loss_aux_d6 = self._optional_ce(model_out.get("logits_d6"), y)
+        loss_aux_swin = self._optional_ce(model_out.get("logits_swin"), y)
+
+        part_masks = model_out.get("part_masks")
+        if torch.is_tensor(part_masks):
+            loss_slot_div = self._slot_diversity_loss(part_masks)
+            loss_border = self._border_loss(part_masks)
+            loss_slot_balance = self._slot_balance_loss(part_masks)
+            loss_slot_smooth = self._slot_smoothness_loss(part_masks, batch.get("edge_index"))
+        else:
+            loss_slot_div = zero
+            loss_border = zero
+            loss_slot_balance = zero
+            loss_slot_smooth = zero
+
+        total = (
+            self.lambda_cls * loss_ce
+            + self.lambda_aux_d6 * loss_aux_d6
+            + self.lambda_aux_swin * loss_aux_swin
+            + self.lambda_slot_div * loss_slot_div
+            + self.lambda_border * loss_border
+            + self.lambda_slot_balance * loss_slot_balance
+            + self.lambda_slot_smooth * loss_slot_smooth
+        )
+        out = {
+            "loss": total,
+            "total_loss": total,
+            "loss_ce": loss_ce,
+            "loss_aux_d6": loss_aux_d6,
+            "loss_aux_swin": loss_aux_swin,
+            "loss_slot_div": loss_slot_div,
+            "loss_border": loss_border,
+            "loss_slot_balance": loss_slot_balance,
+            "loss_slot_smooth": loss_slot_smooth,
+        }
+        out.update(self._branch_accuracy_diagnostics(model_out, y))
+        return out
+
+    def _optional_ce(self, logits: Optional[torch.Tensor], y: torch.Tensor) -> torch.Tensor:
+        if not torch.is_tensor(logits):
+            return y.new_zeros((), dtype=torch.float32)
+        return self.ce(logits, y)
+
+    @staticmethod
+    def _branch_accuracy_diagnostics(
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        diag: Dict[str, torch.Tensor] = {}
+        for key, out_key in (
+            ("diag_logits_d6_accuracy", "logits_d6"),
+            ("diag_logits_swin_accuracy", "logits_swin"),
+            ("diag_logits_fused_accuracy", "logits"),
+        ):
+            logits = model_out.get(out_key)
+            if torch.is_tensor(logits):
+                diag[key] = (logits.argmax(dim=1) == y).float().mean().detach()
+        return diag
+
+
 def build_loss(config: Dict[str, Any]) -> nn.Module:
     cfg = dict(config)
     name = str(cfg.get("name", "d5_retrieval")).lower()
@@ -527,6 +609,8 @@ def build_loss(config: Dict[str, Any]) -> nn.Module:
         return D6HierarchicalMotifLoss(cfg)
     if name in ("d6c_class_attended_motif", "d6c_class_attended_objectives"):
         return D6ClassAttendedMotifLoss(cfg)
+    if name in ("d7_dual_branch_motif", "d7_dual_branch_graph_swin_motif"):
+        return D7DualBranchMotifLoss(cfg)
     if name in ("fixed_motif_classification", "d5b_fixed_motif"):
         return FixedMotifClassificationLoss(cfg)
     raise ValueError(f"Unknown loss: {name}")
