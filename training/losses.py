@@ -596,6 +596,36 @@ class D7DualBranchMotifLoss(D6HierarchicalMotifLoss):
         return diag
 
 
+class D8APrePartMotifLoss(D6HierarchicalMotifLoss):
+    """D6B motif loss plus optional tiny context-alpha regularization."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        cfg = dict(config)
+        cfg.setdefault("border_loss_type", "slot_ratio")
+        cfg.setdefault("slot_balance_type", "kl_uniform")
+        super().__init__(cfg)
+        self.lambda_context_alpha_l2 = float(cfg.get("context_alpha_l2_weight", cfg.get("lambda_context_alpha_l2", 0.0)))
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        out = super().forward(model_out, y, batch)
+        logits = model_out["logits"]
+        alpha = model_out.get("context_alpha")
+        if torch.is_tensor(alpha):
+            loss_context_alpha_l2 = alpha.to(device=logits.device, dtype=logits.dtype).pow(2).mean()
+        else:
+            loss_context_alpha_l2 = logits.new_zeros(())
+        total = out["loss"] + self.lambda_context_alpha_l2 * loss_context_alpha_l2
+        out["loss"] = total
+        out["total_loss"] = total
+        out["loss_context_alpha_l2"] = loss_context_alpha_l2
+        return out
+
+
 def build_loss(config: Dict[str, Any]) -> nn.Module:
     cfg = dict(config)
     name = str(cfg.get("name", "d5_retrieval")).lower()
@@ -611,6 +641,8 @@ def build_loss(config: Dict[str, Any]) -> nn.Module:
         return D6ClassAttendedMotifLoss(cfg)
     if name in ("d7_dual_branch_motif", "d7_dual_branch_graph_swin_motif"):
         return D7DualBranchMotifLoss(cfg)
+    if name in ("d8a_prepart_motif_loss", "d8a_prepart_motif", "graph_swin_prepart_d6b"):
+        return D8APrePartMotifLoss(cfg)
     if name in ("fixed_motif_classification", "d5b_fixed_motif"):
         return FixedMotifClassificationLoss(cfg)
     raise ValueError(f"Unknown loss: {name}")
