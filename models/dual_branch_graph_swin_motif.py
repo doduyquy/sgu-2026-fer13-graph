@@ -272,6 +272,10 @@ class GraphSwinBranch(nn.Module):
         window_heads: int = 4,
         use_window_mha: bool = False,
         region_merge: bool = True,
+        class_head_type: str = "attn_only",
+        use_region_transformer: bool = False,
+        region_layers: int = 1,
+        region_heads: int = 4,
         dropout: float = 0.2,
         **_: Any,
     ) -> None:
@@ -283,6 +287,10 @@ class GraphSwinBranch(nn.Module):
         self.window_size = int(window_size)
         self.shift_size = int(shift_size)
         self.region_merge = bool(region_merge)
+        self.class_head_type = str(class_head_type or "attn_only")
+        self.use_region_transformer = bool(use_region_transformer)
+        if self.class_head_type not in {"attn_only", "attn_plus_mean"}:
+            raise ValueError(f"Unsupported graph_swin.class_head_type: {self.class_head_type}")
         if self.height % self.window_size != 0 or self.width % self.window_size != 0:
             raise ValueError("GraphSwinBranch requires height/width divisible by window_size")
         self.num_win_h = self.height // self.window_size
@@ -307,9 +315,29 @@ class GraphSwinBranch(nn.Module):
             nn.GELU(),
             nn.Dropout(float(dropout)),
         )
+        if self.use_region_transformer:
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self.hidden_dim,
+                nhead=int(region_heads),
+                dim_feedforward=self.hidden_dim * 2,
+                dropout=float(dropout),
+                activation="gelu",
+                batch_first=True,
+            )
+            self.region_transformer = nn.TransformerEncoder(
+                encoder_layer=encoder_layer,
+                num_layers=int(region_layers),
+            )
+        else:
+            self.region_transformer = None
         self.class_queries = nn.Parameter(torch.empty(self.num_classes, self.hidden_dim))
         self.region_key = nn.Linear(self.hidden_dim, self.hidden_dim)
         self.region_value = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.region_mean_proj = (
+            nn.Linear(self.hidden_dim, self.hidden_dim)
+            if self.class_head_type == "attn_plus_mean"
+            else None
+        )
         self.class_logit_head = nn.Linear(self.hidden_dim, 1)
         self.reset_parameters()
 
@@ -331,6 +359,8 @@ class GraphSwinBranch(nn.Module):
 
         window_tokens = self.window_fuse(torch.cat([reg_tokens, shift_tokens], dim=-1))
         region_tokens = self._merge_regions(window_tokens)
+        if self.region_transformer is not None:
+            region_tokens = self.region_transformer(region_tokens)
         class_region_attn, class_repr_swin, logits_swin = self._class_region_attention(region_tokens)
         return {
             "logits_swin": logits_swin,
@@ -380,6 +410,9 @@ class GraphSwinBranch(nn.Module):
         scores = scores / math.sqrt(float(self.hidden_dim))
         class_region_attn = torch.softmax(scores, dim=2)
         class_repr = torch.einsum("bcr,brh->bch", class_region_attn, v_region)
+        if self.region_mean_proj is not None:
+            mean_repr = self.region_mean_proj(region_tokens.mean(dim=1))
+            class_repr = class_repr + mean_repr.unsqueeze(1)
         logits = self.class_logit_head(class_repr).squeeze(-1)
         return class_region_attn, class_repr, logits
 

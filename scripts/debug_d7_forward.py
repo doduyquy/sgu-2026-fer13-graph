@@ -50,6 +50,23 @@ def _expect_shape(out, key: str, shape: tuple[int, ...]) -> None:
         raise AssertionError(f"{key} shape {tuple(value.shape)} != {shape}")
 
 
+def _expected_region_count(model, model_cfg) -> int:
+    swin_branch = getattr(model, "swin_branch", None)
+    if swin_branch is not None:
+        return int(getattr(swin_branch, "num_windows")) if not getattr(swin_branch, "region_merge") else (
+            int(getattr(swin_branch, "num_win_h")) // 2
+        ) * (int(getattr(swin_branch, "num_win_w")) // 2)
+    graph_swin = dict(model_cfg.get("graph_swin", {}) or {})
+    height = int(model_cfg.get("height", 48))
+    width = int(model_cfg.get("width", 48))
+    window_size = int(graph_swin.get("window_size", 6))
+    win_h = height // window_size
+    win_w = width // window_size
+    if bool(graph_swin.get("region_merge", True)):
+        return (win_h // 2) * (win_w // 2)
+    return win_h * win_w
+
+
 def check_config(config_path: str, device: torch.device) -> None:
     config = load_config(config_path)
     model_cfg = dict(config["model"])
@@ -60,10 +77,17 @@ def check_config(config_path: str, device: torch.device) -> None:
     model.train()
 
     batch_size = 2
-    edge_index = _make_grid_edges().to(device)
-    edge_attr = torch.randn(batch_size, edge_index.shape[1], 5, device=device)
+    height = int(model_cfg.get("height", 48))
+    width = int(model_cfg.get("width", 48))
+    node_dim = int(model_cfg.get("node_dim", 7))
+    edge_dim = int(model_cfg.get("edge_dim", 5))
+    hidden_dim = int(model_cfg.get("hidden_dim", 64))
+    expected_nodes = height * width
+    expected_regions = _expected_region_count(model, model_cfg)
+    edge_index = _make_grid_edges(height=height, width=width).to(device)
+    edge_attr = torch.randn(batch_size, edge_index.shape[1], edge_dim, device=device)
     batch = {
-        "x": torch.randn(batch_size, 2304, 7, device=device),
+        "x": torch.randn(batch_size, expected_nodes, node_dim, device=device),
         "edge_index": edge_index,
         "edge_attr": edge_attr,
         "y": torch.tensor([0, 6], dtype=torch.long, device=device),
@@ -79,19 +103,21 @@ def check_config(config_path: str, device: torch.device) -> None:
     mode = str(model_cfg.get("mode"))
     _expect_shape(out, "logits", (2, 7))
     _expect_shape(out, "logits_swin", (2, 7))
-    _expect_shape(out, "region_tokens", (2, 16, 64))
-    _expect_shape(out, "class_region_attn", (2, 7, 16))
+    _expect_shape(out, "region_tokens", (2, expected_regions, hidden_dim))
+    _expect_shape(out, "class_region_attn", (2, 7, expected_regions))
     if mode in ("logits_sum", "gated_class_repr"):
         _expect_shape(out, "logits_d6", (2, 7))
     if mode == "gated_class_repr":
-        _expect_shape(out, "class_repr_d6", (2, 7, 64))
-        _expect_shape(out, "class_repr_swin", (2, 7, 64))
+        _expect_shape(out, "class_repr_d6", (2, 7, hidden_dim))
+        _expect_shape(out, "class_repr_swin", (2, 7, hidden_dim))
         gate = out.get("fusion_gate")
-        if not torch.is_tensor(gate) or tuple(gate.shape) not in ((2, 7, 1), (2, 7, 64)):
+        if not torch.is_tensor(gate) or tuple(gate.shape) not in ((2, 7, 1), (2, 7, hidden_dim)):
             raise AssertionError(f"fusion_gate shape {None if gate is None else tuple(gate.shape)}")
     print(
         f"OK {Path(config_path).name}: mode={mode} "
-        f"loss={float(loss.detach().cpu()):.4f} logits={tuple(out['logits'].shape)}"
+        f"loss={float(loss.detach().cpu()):.4f} logits={tuple(out['logits'].shape)} "
+        f"region_tokens={tuple(out['region_tokens'].shape)} "
+        f"class_region_attn={tuple(out['class_region_attn'].shape)}"
     )
 
 

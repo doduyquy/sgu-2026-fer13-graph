@@ -58,7 +58,33 @@ def _plot_matrix(
     plt.close(fig)
 
 
+def _square_grid_shape(num_regions: int) -> tuple[int, int] | None:
+    side = int(math.sqrt(int(num_regions)))
+    if side * side == int(num_regions):
+        return side, side
+    return None
+
+
 def _plot_class_region_grid(avg_attn: np.ndarray, out_path: Path, title: str) -> None:
+    grid_shape = _square_grid_shape(avg_attn.shape[1])
+    if grid_shape is None:
+        cols = 2
+        rows = int(math.ceil(avg_attn.shape[0] / cols))
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 4.0, rows * 2.2))
+        axes = np.asarray(axes).reshape(-1)
+        for ax in axes:
+            ax.axis("off")
+        for idx in range(avg_attn.shape[0]):
+            axes[idx].bar(np.arange(avg_attn.shape[1]), avg_attn[idx])
+            axes[idx].set_title(EMOTION_NAMES[idx], fontsize=8)
+            axes[idx].set_xlabel("region")
+            axes[idx].set_ylim(0.0, max(float(np.nanmax(avg_attn)), 1e-8))
+            axes[idx].axis("on")
+        fig.suptitle(title, fontsize=10)
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=160)
+        plt.close(fig)
+        return
     cols = 4
     rows = int(math.ceil(avg_attn.shape[0] / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.2, rows * 2.3))
@@ -67,7 +93,7 @@ def _plot_class_region_grid(avg_attn: np.ndarray, out_path: Path, title: str) ->
         ax.axis("off")
     vmax = max(float(np.nanmax(avg_attn)), 1e-8)
     for idx in range(avg_attn.shape[0]):
-        axes[idx].imshow(avg_attn[idx].reshape(4, 4), cmap="magma", vmin=0.0, vmax=vmax)
+        axes[idx].imshow(avg_attn[idx].reshape(grid_shape), cmap="magma", vmin=0.0, vmax=vmax)
         axes[idx].set_title(EMOTION_NAMES[idx], fontsize=8)
         axes[idx].axis("off")
     fig.suptitle(title, fontsize=10)
@@ -77,8 +103,19 @@ def _plot_class_region_grid(avg_attn: np.ndarray, out_path: Path, title: str) ->
 
 
 def _plot_region_token_norm(region_norm: np.ndarray, out_path: Path) -> None:
+    grid_shape = _square_grid_shape(region_norm.shape[0])
+    if grid_shape is None:
+        fig, ax = plt.subplots(figsize=(8, 3.5))
+        ax.bar(np.arange(region_norm.shape[0]), region_norm)
+        ax.set_title("Average region token norm")
+        ax.set_xlabel("region")
+        ax.set_ylabel("norm")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=160)
+        plt.close(fig)
+        return
     fig, ax = plt.subplots(figsize=(4.5, 4))
-    im = ax.imshow(region_norm.reshape(4, 4), cmap="cividis")
+    im = ax.imshow(region_norm.reshape(grid_shape), cmap="cividis")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     ax.set_title("Average region token norm")
     ax.axis("off")
@@ -103,6 +140,8 @@ def _plot_gate_by_class(gate: np.ndarray, out_path: Path) -> None:
 def _write_region_csvs(avg_attn: np.ndarray, out_dir: Path, top_k: int = 4) -> None:
     eps = 1e-8
     entropy = -(avg_attn * np.log(np.clip(avg_attn, eps, None))).sum(axis=1)
+    grid_shape = _square_grid_shape(avg_attn.shape[1])
+    grid_cols = grid_shape[1] if grid_shape is not None else None
     with (out_dir / "class_region_attention_entropy.csv").open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["class_idx", "class_name", "entropy", "max_prob"])
@@ -114,7 +153,11 @@ def _write_region_csvs(avg_attn: np.ndarray, out_dir: Path, top_k: int = 4) -> N
         for idx, name in enumerate(EMOTION_NAMES[: avg_attn.shape[0]]):
             top = np.argsort(avg_attn[idx])[-int(top_k):][::-1]
             for rank, region in enumerate(top, start=1):
-                writer.writerow([idx, name, rank, int(region), int(region // 4), int(region % 4), float(avg_attn[idx, region])])
+                if grid_cols is None:
+                    row, col = "", ""
+                else:
+                    row, col = int(region // grid_cols), int(region % grid_cols)
+                writer.writerow([idx, name, rank, int(region), row, col, float(avg_attn[idx, region])])
 
 
 def _write_gate_csvs(gate_by_class: np.ndarray, gate_samples: list[list[float]], out_dir: Path) -> None:
