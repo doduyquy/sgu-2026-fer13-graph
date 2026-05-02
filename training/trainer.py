@@ -554,7 +554,13 @@ class D5Trainer:
 
         stale_epochs = 0
         history = []
-        for epoch in range(1, int(epochs) + 1):
+        start_epoch = int(getattr(self, "start_epoch", 1))
+        if start_epoch > int(epochs):
+            print(
+                f"[Resume] start_epoch={start_epoch} is greater than epochs={int(epochs)}; "
+                "no training epochs will run."
+            )
+        for epoch in range(start_epoch, int(epochs) + 1):
             lr_metrics_before = _optimizer_lr_metrics(self.optimizer)
             train_metrics = self.train_one_epoch(
                 train_loader,
@@ -619,17 +625,113 @@ class D5Trainer:
 
     def save_checkpoint(self, filename: str, epoch: int, metrics: Dict[str, float]) -> Path:
         path = self.checkpoint_dir / filename
-        torch.save(
-            {
-                "epoch": int(epoch),
-                "model_state_dict": self.model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-                "metrics": metrics,
-                "config": self.config,
-            },
-            path,
-        )
+        checkpoint = {
+            "epoch": int(epoch),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "metrics": metrics,
+            "best_metric": float(self.best_metric),
+            "best_epoch": int(self.best_epoch),
+            "config": self.config,
+        }
+        if self.scheduler is not None and hasattr(self.scheduler, "state_dict"):
+            checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
+        if self.scaler is not None:
+            checkpoint["scaler_state_dict"] = self.scaler.state_dict()
+        torch.save(checkpoint, path)
         return path
+
+    def load_checkpoint(
+        self,
+        checkpoint_path: str | Path,
+        *,
+        load_optimizer: bool = True,
+        load_scheduler: bool = True,
+        load_epoch: bool = True,
+        strict: bool = True,
+        best_metric: Optional[float] = None,
+        best_epoch: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        path = Path(checkpoint_path)
+        try:
+            checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        except TypeError:
+            checkpoint = torch.load(path, map_location=self.device)
+        state = checkpoint.get("model_state_dict", checkpoint)
+        self.model.load_state_dict(state, strict=bool(strict))
+
+        if load_optimizer and "optimizer_state_dict" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self._move_optimizer_state_to_device()
+        elif load_optimizer:
+            print(f"[Resume] optimizer_state_dict not found in {path}; optimizer not restored.")
+
+        if load_scheduler and self.scheduler is not None:
+            scheduler_state = checkpoint.get("scheduler_state_dict")
+            if scheduler_state is not None:
+                self.scheduler.load_state_dict(scheduler_state)
+            else:
+                print(f"[Resume] scheduler_state_dict not found in {path}; scheduler not restored.")
+
+        scaler_state = checkpoint.get("scaler_state_dict")
+        if scaler_state is not None and self.scaler is not None:
+            self.scaler.load_state_dict(scaler_state)
+
+        ckpt_epoch = int(checkpoint.get("epoch", 0) or 0)
+        if load_epoch:
+            self.start_epoch = ckpt_epoch + 1
+        if best_metric is not None:
+            self.best_metric = float(best_metric)
+        elif "best_metric" in checkpoint:
+            self.best_metric = float(checkpoint["best_metric"])
+        else:
+            metrics = checkpoint.get("metrics", {}) or {}
+            monitor = self.config.get("training", {}).get("monitor", "val_macro_f1")
+            if monitor in metrics:
+                self.best_metric = float(metrics[monitor])
+            elif f"scheduler_monitor_{monitor}" in metrics:
+                self.best_metric = float(metrics[f"scheduler_monitor_{monitor}"])
+            elif "scheduler_monitor_value" in metrics:
+                self.best_metric = float(metrics["scheduler_monitor_value"])
+
+        if best_epoch is not None:
+            self.best_epoch = int(best_epoch)
+        elif "best_epoch" in checkpoint:
+            self.best_epoch = int(checkpoint["best_epoch"])
+        elif ckpt_epoch > 0:
+            self.best_epoch = ckpt_epoch
+
+        print(
+            f"[Resume] loaded {path} epoch={ckpt_epoch} "
+            f"start_epoch={getattr(self, 'start_epoch', 1)} "
+            f"best_epoch={self.best_epoch} best_metric={self.best_metric:.6f}"
+        )
+        return checkpoint
+
+    def init_from_checkpoint(
+        self,
+        checkpoint_path: str | Path,
+        *,
+        strict: bool = True,
+    ) -> Dict[str, Any]:
+        checkpoint = self.load_checkpoint(
+            checkpoint_path,
+            load_optimizer=False,
+            load_scheduler=False,
+            load_epoch=False,
+            strict=strict,
+        )
+        self.start_epoch = 1
+        self.best_metric = -float("inf")
+        self.best_epoch = -1
+        print(f"[Init] loaded model weights from {checkpoint_path}")
+        return checkpoint
+
+    def _move_optimizer_state_to_device(self) -> None:
+        for state in self.optimizer.state.values():
+            for key, value in state.items():
+                if torch.is_tensor(value):
+                    state[key] = value.to(self.device)
 
     def _save_history(self, history) -> None:
         path = self.output_root / "training_history.json"

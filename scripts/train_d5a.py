@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -19,6 +20,32 @@ def run_train(config):
     train_loader = build_dataloader(config, split="train", shuffle=True)
     val_loader = build_dataloader(config, split="val", shuffle=False)
     trainer = create_trainer(config)
+    resume_cfg = config.get("resume", {}) or {}
+    init_cfg = config.get("init_checkpoint", {}) or {}
+    if resume_cfg.get("path"):
+        trainer.load_checkpoint(
+            resume_cfg["path"],
+            load_optimizer=bool(resume_cfg.get("load_optimizer", True)),
+            load_scheduler=bool(resume_cfg.get("load_scheduler", True)),
+            load_epoch=bool(resume_cfg.get("load_epoch", True)),
+            strict=bool(resume_cfg.get("strict", True)),
+            best_metric=resume_cfg.get("best_metric"),
+            best_epoch=resume_cfg.get("best_epoch"),
+        )
+        best_checkpoint_path = resume_cfg.get("best_checkpoint_path")
+        if best_checkpoint_path:
+            src = Path(best_checkpoint_path)
+            dst = trainer.checkpoint_dir / "best.pth"
+            if src.exists() and not dst.exists():
+                shutil.copy2(src, dst)
+                print(f"[Resume] seeded output best checkpoint from {src}")
+            elif not src.exists():
+                print(f"[Resume] best_checkpoint_path not found: {src}")
+    elif init_cfg.get("path"):
+        trainer.init_from_checkpoint(
+            init_cfg["path"],
+            strict=bool(init_cfg.get("strict", True)),
+        )
     training_cfg = config.get("training", {})
     result = trainer.fit(
         train_loader=train_loader,
@@ -50,6 +77,9 @@ def main() -> None:
     parser.add_argument("--wandb_project", default=None)
     parser.add_argument("--wandb_entity", default=None)
     parser.add_argument("--no_wandb", action="store_true")
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--resume_best_checkpoint", default=None)
+    parser.add_argument("--init_checkpoint", default=None)
     # --- Performance profiling & optimisation ---
     parser.add_argument("--profile_batches", type=int, default=None)
     parser.add_argument("--num_workers", type=int, default=None)
@@ -64,6 +94,23 @@ def main() -> None:
     parser.add_argument("--no_amp", action="store_true", default=False)
     args = parser.parse_args()
     config = apply_cli_overrides(load_config(args.config, environment=args.environment), args)
+    if args.resume is not None:
+        config["resume"] = {
+            **dict(config.get("resume", {}) or {}),
+            "path": args.resume,
+        }
+        config.pop("init_checkpoint", None)
+    if args.resume_best_checkpoint is not None:
+        config["resume"] = {
+            **dict(config.get("resume", {}) or {}),
+            "best_checkpoint_path": args.resume_best_checkpoint,
+        }
+    if args.init_checkpoint is not None:
+        config["init_checkpoint"] = {
+            **dict(config.get("init_checkpoint", {}) or {}),
+            "path": args.init_checkpoint,
+        }
+        config.pop("resume", None)
     run_train(config)
 
 
