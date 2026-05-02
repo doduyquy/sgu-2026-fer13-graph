@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any, Dict, Optional, Sequence
 
 import torch
@@ -626,6 +627,101 @@ class D8APrePartMotifLoss(D6HierarchicalMotifLoss):
         return out
 
 
+class D8BFaceAwareLoss(nn.Module):
+    """CE plus light pixel-gate regularizers for D8B."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        super().__init__()
+        cfg = dict(config)
+        self.ce_weight = float(cfg.get("ce_weight", cfg.get("lambda_cls", 1.0)))
+        self.lambda_area = float(cfg.get("pixel_gate_area_weight", 0.01))
+        self.target_area = float(cfg.get("pixel_gate_area_target", 0.55))
+        self.lambda_border = float(cfg.get("pixel_gate_border_weight", 0.01))
+        self.border_width = int(cfg.get("pixel_gate_border_width", cfg.get("border_width", 3)))
+        self.lambda_smooth = float(cfg.get("pixel_gate_smooth_weight", 0.001))
+        self.height = int(cfg.get("height", 48))
+        self.width = int(cfg.get("width", 48))
+        self.eps = float(cfg.get("eps", 1e-6))
+        self._warned_missing_gate = False
+
+        class_weights = None
+        if cfg.get("use_class_weights", True):
+            counts = cfg.get("class_counts")
+            if counts is None:
+                raise ValueError("loss.use_class_weights=true requires loss.class_counts")
+            class_weights = compute_class_weights(
+                counts,
+                normalize_mean=True,
+                power=float(cfg.get("class_weight_power", 1.0)),
+            )
+        self.ce = WeightedCrossEntropy(class_weights)
+        self.register_buffer("border_mask", self._make_border_mask(), persistent=False)
+
+    def forward(
+        self,
+        model_out: Dict[str, torch.Tensor],
+        y: torch.Tensor,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        del batch
+        logits = model_out["logits"]
+        loss_ce = self.ce(logits, y.long())
+        zero = logits.new_zeros(())
+        pixel_gate = model_out.get("pixel_gate")
+        if torch.is_tensor(pixel_gate):
+            loss_gate_area = (pixel_gate.mean() - self.target_area).pow(2)
+            loss_gate_border = self._border_loss(pixel_gate)
+            loss_gate_smooth = self._smoothness_loss(pixel_gate)
+        else:
+            if not self._warned_missing_gate:
+                warnings.warn("D8BFaceAwareLoss did not find model_out['pixel_gate']; gate losses are zero.")
+                self._warned_missing_gate = True
+            loss_gate_area = zero
+            loss_gate_border = zero
+            loss_gate_smooth = zero
+
+        total = (
+            self.ce_weight * loss_ce
+            + self.lambda_area * loss_gate_area
+            + self.lambda_border * loss_gate_border
+            + self.lambda_smooth * loss_gate_smooth
+        )
+        return {
+            "loss": total,
+            "total_loss": total,
+            "loss_ce": loss_ce,
+            "loss_gate_area": loss_gate_area,
+            "loss_gate_border": loss_gate_border,
+            "loss_gate_smooth": loss_gate_smooth,
+        }
+
+    def _border_loss(self, pixel_gate: torch.Tensor) -> torch.Tensor:
+        border = self.border_mask.to(device=pixel_gate.device, dtype=torch.bool)
+        if border.numel() != pixel_gate.shape[1] or not bool(border.any()):
+            return pixel_gate.new_zeros(())
+        return pixel_gate[:, border, :].mean()
+
+    def _smoothness_loss(self, pixel_gate: torch.Tensor) -> torch.Tensor:
+        if self.lambda_smooth <= 0.0:
+            return pixel_gate.new_zeros(())
+        if pixel_gate.shape[1] != self.height * self.width:
+            return pixel_gate.new_zeros(())
+        grid = pixel_gate.view(pixel_gate.shape[0], self.height, self.width, 1)
+        dy = (grid[:, 1:, :, :] - grid[:, :-1, :, :]).abs().mean()
+        dx = (grid[:, :, 1:, :] - grid[:, :, :-1, :]).abs().mean()
+        return 0.5 * (dx + dy)
+
+    def _make_border_mask(self) -> torch.Tensor:
+        mask = torch.zeros(self.height, self.width, dtype=torch.float32)
+        bw = int(self.border_width)
+        if bw > 0:
+            mask[:bw, :] = 1.0
+            mask[-bw:, :] = 1.0
+            mask[:, :bw] = 1.0
+            mask[:, -bw:] = 1.0
+        return mask.reshape(-1)
+
+
 def build_loss(config: Dict[str, Any]) -> nn.Module:
     cfg = dict(config)
     name = str(cfg.get("name", "d5_retrieval")).lower()
@@ -643,6 +739,8 @@ def build_loss(config: Dict[str, Any]) -> nn.Module:
         return D7DualBranchMotifLoss(cfg)
     if name in ("d8a_prepart_motif_loss", "d8a_prepart_motif", "graph_swin_prepart_d6b"):
         return D8APrePartMotifLoss(cfg)
+    if name in ("d8b_face_aware_loss", "face_aware_graph_swin_d8b"):
+        return D8BFaceAwareLoss(cfg)
     if name in ("fixed_motif_classification", "d5b_fixed_motif"):
         return FixedMotifClassificationLoss(cfg)
     raise ValueError(f"Unknown loss: {name}")

@@ -8,6 +8,7 @@ from torch import nn
 
 from models.class_pixel_motif_graph_retrieval import ClassPixelMotifGraphRetrieval
 from models.dual_branch_graph_swin_motif import DualBranchGraphSwinMotifD7
+from models.face_aware_graph_swin_d8b import FaceAwareGraphSwinD8B
 from models.graph_swin_prepart_d6b import GraphSwinPrePartD6BD8A
 from models.slot_pixel_part_graph_motif import SlotPixelPartGraphMotif
 
@@ -26,4 +27,6 @@ def build_model(config: Dict[str, Any]) -> nn.Module:
         return DualBranchGraphSwinMotifD7.from_config(cfg)
     if name in ("graph_swin_prepart_d6b_d8a", "d8a_graph_swin_prepart_d6b"):
         return GraphSwinPrePartD6BD8A.from_config(cfg)
+    if name in ("face_aware_graph_swin_d8b", "d8b_face_aware_graph_swin"):
+        return FaceAwareGraphSwinD8B.from_config(cfg)
     raise ValueError(f"Unknown model: {name}")
