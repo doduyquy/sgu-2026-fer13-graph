@@ -574,8 +574,10 @@ def dump_json(payload: Any, path: str | Path) -> None:
 def save_confusion_matrix(cm: np.ndarray, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    accuracy = float(np.trace(cm) / max(np.sum(cm), 1))
     fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(cm, cmap="Blues")
+    ax.set_title(f"Confusion Matrix - accuracy={accuracy:.4f}")
     ax.set_xticks(range(NUM_CLASSES))
     ax.set_yticks(range(NUM_CLASSES))
     ax.set_xticklabels(EMOTION_NAMES, rotation=45, ha="right")
