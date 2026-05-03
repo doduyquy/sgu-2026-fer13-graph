@@ -148,9 +148,11 @@ def _finalize_d6_diagnostics(d6_diag: Dict) -> Dict:
 def save_confusion_matrix(cm: np.ndarray, out_path: str | Path) -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    accuracy = float(np.trace(cm) / max(np.sum(cm), 1))
     fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(cm, cmap="Blues")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_title(f"Confusion Matrix - accuracy={accuracy:.4f}")
     ax.set_xticks(range(NUM_CLASSES))
     ax.set_yticks(range(NUM_CLASSES))
     ax.set_xticklabels(EMOTION_NAMES, rotation=45, ha="right")
