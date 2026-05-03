@@ -1,4 +1,4 @@
-"""Official D7 Graph-Swin ensemble evaluation.
+"""Official D7 / D7+D8B Graph-Swin ensemble evaluation.
 
 The script can evaluate an ensemble either from checkpoints on a shared
 dataloader or from saved predictions.csv files containing per-class logits.
@@ -18,7 +18,6 @@ from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
 import yaml
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -27,14 +26,82 @@ for path in (SCRIPT_DIR, PROJECT_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from common import apply_cli_overrides, build_dataloader, dump_json, load_checkpoint_model, load_config  # noqa: E402
-from data.labels import EMOTION_NAMES, NUM_CLASSES  # noqa: E402
-from evaluation.evaluator import save_confusion_matrix, save_example_grid  # noqa: E402
-from evaluation.metrics import classification_report_dict, compute_metrics, confusion_matrix_array  # noqa: E402
-from training.trainer import move_to_device  # noqa: E402
+EMOTION_NAMES = ["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"]
+NUM_CLASSES = len(EMOTION_NAMES)
 
 
-DEFAULT_MEMBERS = [
+def confusion_matrix_array(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
+    cm = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=np.int64)
+    for true_label, pred_label in zip(y_true, y_pred):
+        cm[int(true_label), int(pred_label)] += 1
+    return cm
+
+
+def _per_class_report(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[list[dict[str, float]], np.ndarray]:
+    cm = confusion_matrix_array(y_true, y_pred)
+    pred_count = cm.sum(axis=0)
+    support = cm.sum(axis=1)
+    rows: list[dict[str, float]] = []
+    for class_idx in range(NUM_CLASSES):
+        tp = float(cm[class_idx, class_idx])
+        precision = tp / float(pred_count[class_idx]) if pred_count[class_idx] else 0.0
+        recall = tp / float(support[class_idx]) if support[class_idx] else 0.0
+        f1 = 2.0 * precision * recall / (precision + recall) if precision + recall else 0.0
+        rows.append(
+            {
+                "precision": precision,
+                "recall": recall,
+                "f1-score": f1,
+                "support": float(support[class_idx]),
+            }
+        )
+    return rows, support
+
+
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    rows, support = _per_class_report(y_true, y_pred)
+    f1 = np.asarray([row["f1-score"] for row in rows], dtype=np.float64)
+    total = float(len(y_true))
+    return {
+        "accuracy": float(np.mean(y_true == y_pred)) if total else 0.0,
+        "macro_f1": float(f1.mean()) if len(f1) else 0.0,
+        "weighted_f1": float(np.sum(f1 * support) / total) if total else 0.0,
+    }
+
+
+def classification_report_dict(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
+    y_true = np.asarray(y_true, dtype=np.int64)
+    y_pred = np.asarray(y_pred, dtype=np.int64)
+    rows, support = _per_class_report(y_true, y_pred)
+    total = float(len(y_true))
+    report: dict[str, Any] = {
+        class_name: rows[class_idx] for class_idx, class_name in enumerate(EMOTION_NAMES)
+    }
+    precision = np.asarray([row["precision"] for row in rows], dtype=np.float64)
+    recall = np.asarray([row["recall"] for row in rows], dtype=np.float64)
+    f1 = np.asarray([row["f1-score"] for row in rows], dtype=np.float64)
+    report["accuracy"] = float(np.mean(y_true == y_pred)) if total else 0.0
+    report["macro avg"] = {
+        "precision": float(precision.mean()),
+        "recall": float(recall.mean()),
+        "f1-score": float(f1.mean()),
+        "support": total,
+    }
+    report["weighted avg"] = {
+        "precision": float(np.sum(precision * support) / total) if total else 0.0,
+        "recall": float(np.sum(recall * support) / total) if total else 0.0,
+        "f1-score": float(np.sum(f1 * support) / total) if total else 0.0,
+        "support": total,
+    }
+    return report
+
+
+OLD_D7_OUTPUT_DIR = "output/d7_ensemble_seed44_long150_window4"
+NEW_D7_D8B_OUTPUT_DIR = "output/d7_d8b_ensemble_seed44_long150_window4_border020_area045_probavg"
+
+OLD_D7_MEMBERS = [
     (
         "seed44",
         "configs/experiments/d7a_graph_swin_region_transformer_seed44.yaml",
@@ -54,6 +121,52 @@ DEFAULT_MEMBERS = [
         "output/d7a_graph_swin_region_transformer_window4/evaluation/predictions.csv",
     ),
 ]
+
+NEW_D7_D8B_MEMBERS = [
+    (
+        "d7_seed44",
+        "configs/experiments/d7a_graph_swin_region_transformer_seed44.yaml",
+        "output/d7a_graph_swin_region_transformer_seed44/checkpoints/best.pth",
+        "output/d7a_graph_swin_region_transformer_seed44/evaluation/predictions.csv",
+    ),
+    (
+        "d7_long150_resume",
+        "configs/experiments/d7a_graph_swin_region_transformer_long150_resume.yaml",
+        "output/d7a_graph_swin_region_transformer_long150_resume/checkpoints/best.pth",
+        "output/d7a_graph_swin_region_transformer_long150_resume/evaluation/predictions.csv",
+    ),
+    (
+        "d7_window4_region_transformer",
+        "configs/experiments/d7a_graph_swin_region_transformer_window4.yaml",
+        "output/d7a_graph_swin_region_transformer_window4/checkpoints/best.pth",
+        "output/d7a_graph_swin_region_transformer_window4/evaluation/predictions.csv",
+    ),
+    (
+        "d8b_border020",
+        "configs/experiments/d8b_face_aware_graph_swin_border020.yaml",
+        "output/d8b_face_aware_graph_swin_border020/checkpoints/best.pth",
+        "output/d8b_face_aware_graph_swin_border020/evaluation/predictions.csv",
+    ),
+    (
+        "d8b_area045",
+        "configs/experiments/d8b_face_aware_graph_swin_area045.yaml",
+        "output/d8b_face_aware_graph_swin_area045/checkpoints/best.pth",
+        "output/d8b_face_aware_graph_swin_area045/evaluation/predictions.csv",
+    ),
+]
+
+ENSEMBLE_PRESETS = {
+    "d7_seed44_long150_window4_logit": {
+        "members": OLD_D7_MEMBERS,
+        "method": "logit_average",
+        "output_dir": OLD_D7_OUTPUT_DIR,
+    },
+    "d7_d8b_border020_area045_probavg": {
+        "members": NEW_D7_D8B_MEMBERS,
+        "method": "probability_average",
+        "output_dir": NEW_D7_D8B_OUTPUT_DIR,
+    },
+}
 
 CONFUSION_FOCUS = [
     ("fear_to_sad", 2, 4),
@@ -108,10 +221,11 @@ def parse_prediction_file(value: str) -> MemberSpec:
     return MemberSpec(name=parts[0], predictions=parts[1])
 
 
-def default_members() -> list[MemberSpec]:
+def default_members(preset: str = "d7_d8b_border020_area045_probavg") -> list[MemberSpec]:
+    default_rows = ENSEMBLE_PRESETS[preset]["members"]
     return [
         MemberSpec(name=name, config=config, checkpoint=checkpoint, predictions=predictions)
-        for name, config, checkpoint, predictions in DEFAULT_MEMBERS
+        for name, config, checkpoint, predictions in default_rows
     ]
 
 
@@ -145,6 +259,14 @@ def combine_scores(member_logits: np.ndarray, method: str, weights: list[float] 
             raise ValueError(f"Expected {member_logits.shape[0]} weights, got {len(weights)}")
         ensemble_logits = weighted_average(member_logits, np.asarray(weights, dtype=np.float64))
         ensemble_prob = softmax_np(ensemble_logits)
+    elif method == "weighted_probability_average":
+        if weights is None:
+            raise ValueError("--weights is required for weighted_probability_average")
+        if len(weights) != member_logits.shape[0]:
+            raise ValueError(f"Expected {member_logits.shape[0]} weights, got {len(weights)}")
+        member_probs = np.stack([softmax_np(member_logits[i]) for i in range(member_logits.shape[0])], axis=0)
+        ensemble_prob = weighted_average(member_probs, np.asarray(weights, dtype=np.float64))
+        ensemble_logits = np.log(np.clip(ensemble_prob, 1e-12, None))
     else:
         raise ValueError(f"Unsupported method: {method}")
     return ensemble_logits, ensemble_prob
@@ -260,11 +382,15 @@ def load_prediction_members(members: list[MemberSpec]) -> dict[str, Any]:
     }
 
 
-@torch.no_grad()
 def load_checkpoint_members(
     members: list[MemberSpec],
     args: argparse.Namespace,
 ) -> dict[str, Any]:
+    import torch
+
+    from common import apply_cli_overrides, build_dataloader, load_checkpoint_model, load_config
+    from training.trainer import move_to_device
+
     if not members:
         raise ValueError("No checkpoint members provided")
     models = []
@@ -315,42 +441,43 @@ def load_checkpoint_members(
     member_preds: dict[str, list[int]] = {member.name: [] for member in members}
     correct_examples: list[dict[str, Any]] = []
     wrong_examples: list[dict[str, Any]] = []
-    for batch_idx, batch in enumerate(loader):
-        if args.max_batches is not None and batch_idx >= int(args.max_batches):
-            break
-        batch = move_to_device(batch, device)
-        logits_for_batch = []
-        for idx, model in enumerate(models):
-            logits = model(batch)["logits"].detach().float()
-            logits_for_batch.append(logits)
-            pred = logits.argmax(dim=1).detach().cpu().numpy().astype(int)
-            member_logits[idx].extend(logits.cpu().numpy().tolist())
-            member_preds[members[idx].name].extend(pred.tolist())
-        stacked = torch.stack(logits_for_batch, dim=0).cpu().numpy()
-        ens_logits, ens_prob = combine_scores(
-            stacked,
-            args.method,
-            parse_weights(args.weights) if args.method == "weighted_logit_average" else None,
-        )
-        ens_pred = ens_logits.argmax(axis=1).astype(int)
-        labels = batch["y"].detach().cpu().numpy().astype(int)
-        gids = batch["graph_id"].detach().cpu().numpy().astype(int)
-        y_true.extend(labels.tolist())
-        graph_ids.extend([str(x) for x in gids.tolist()])
-        if len(correct_examples) < 10 or len(wrong_examples) < 10:
-            x_cpu = batch["x"].detach().cpu()
-            for i in range(x_cpu.shape[0]):
-                item = {
-                    "graph_id": int(gids[i]),
-                    "y_true": int(labels[i]),
-                    "y_pred": int(ens_pred[i]),
-                    "confidence": float(ens_prob[i, ens_pred[i]]),
-                    "image": x_cpu[i, :, 0].float().reshape(48, 48).numpy(),
-                }
-                if labels[i] == ens_pred[i] and len(correct_examples) < 10:
-                    correct_examples.append(item)
-                elif labels[i] != ens_pred[i] and len(wrong_examples) < 10:
-                    wrong_examples.append(item)
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(loader):
+            if args.max_batches is not None and batch_idx >= int(args.max_batches):
+                break
+            batch = move_to_device(batch, device)
+            logits_for_batch = []
+            for idx, model in enumerate(models):
+                logits = model(batch)["logits"].detach().float()
+                logits_for_batch.append(logits)
+                pred = logits.argmax(dim=1).detach().cpu().numpy().astype(int)
+                member_logits[idx].extend(logits.cpu().numpy().tolist())
+                member_preds[members[idx].name].extend(pred.tolist())
+            stacked = torch.stack(logits_for_batch, dim=0).cpu().numpy()
+            ens_logits, ens_prob = combine_scores(
+                stacked,
+                args.method,
+                parse_weights(args.weights) if args.method.startswith("weighted_") else None,
+            )
+            ens_pred = ens_logits.argmax(axis=1).astype(int)
+            labels = batch["y"].detach().cpu().numpy().astype(int)
+            gids = batch["graph_id"].detach().cpu().numpy().astype(int)
+            y_true.extend(labels.tolist())
+            graph_ids.extend([str(x) for x in gids.tolist()])
+            if len(correct_examples) < 10 or len(wrong_examples) < 10:
+                x_cpu = batch["x"].detach().cpu()
+                for i in range(x_cpu.shape[0]):
+                    item = {
+                        "graph_id": int(gids[i]),
+                        "y_true": int(labels[i]),
+                        "y_pred": int(ens_pred[i]),
+                        "confidence": float(ens_prob[i, ens_pred[i]]),
+                        "image": x_cpu[i, :, 0].float().reshape(48, 48).numpy(),
+                    }
+                    if labels[i] == ens_pred[i] and len(correct_examples) < 10:
+                        correct_examples.append(item)
+                    elif labels[i] != ens_pred[i] and len(wrong_examples) < 10:
+                        wrong_examples.append(item)
     return {
         "sample_ids": graph_ids,
         "graph_ids": graph_ids,
@@ -437,6 +564,39 @@ def write_csv(path: str | Path, rows: list[dict[str, Any]], fieldnames: list[str
             writer.writerow(row)
 
 
+def dump_json(payload: Any, path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def save_confusion_matrix(cm: np.ndarray, path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(7, 6))
+    im = ax.imshow(cm, cmap="Blues")
+    ax.set_xticks(range(NUM_CLASSES))
+    ax.set_yticks(range(NUM_CLASSES))
+    ax.set_xticklabels(EMOTION_NAMES, rotation=45, ha="right")
+    ax.set_yticklabels(EMOTION_NAMES)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    for i in range(NUM_CLASSES):
+        for j in range(NUM_CLASSES):
+            ax.text(j, i, int(cm[i, j]), ha="center", va="center", fontsize=8)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+
+
+def save_checkpoint_example_grid(examples: list[dict[str, Any]], path: Path, title: str) -> None:
+    from evaluation.evaluator import save_example_grid
+
+    save_example_grid(examples, path, title)
+
+
 def save_placeholder_examples(path: Path, title: str, detail: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(8, 3))
@@ -496,6 +656,12 @@ def save_predictions(
 
 
 def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
+    preset = ENSEMBLE_PRESETS[args.ensemble_preset]
+    if args.method is None:
+        args.method = preset["method"]
+    if args.output_dir is None:
+        args.output_dir = preset["output_dir"]
+
     output_dir = Path(args.output_dir)
     eval_dir = output_dir / "evaluation"
     eval_dir.mkdir(parents=True, exist_ok=True)
@@ -504,13 +670,18 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
     if args.members:
         members = args.members
         for member in members:
-            default = next((x for x in default_members() if x.name == member.name), None)
+            default = next((x for x in default_members(args.ensemble_preset) if x.name == member.name), None)
             if default is not None:
                 member.predictions = default.predictions
     elif args.prediction_files:
         members = args.prediction_files
+        for member in members:
+            default = next((x for x in default_members(args.ensemble_preset) if x.name == member.name), None)
+            if default is not None:
+                member.config = default.config
+                member.checkpoint = default.checkpoint
     else:
-        members = default_members()
+        members = default_members(args.ensemble_preset)
 
     checkpoint_ready = all(member.config and member.checkpoint and Path(member.checkpoint).exists() for member in members)
     prediction_ready = all(member.predictions and Path(member.predictions).exists() for member in members)
@@ -570,7 +741,7 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
         bool(args.save_logits),
     )
     if loaded.get("correct_examples"):
-        save_example_grid(loaded["correct_examples"], eval_dir / "correct_examples.png", "10 correct ensemble predictions")
+        save_checkpoint_example_grid(loaded["correct_examples"], eval_dir / "correct_examples.png", "10 correct ensemble predictions")
     else:
         save_placeholder_examples(
             eval_dir / "correct_examples.png",
@@ -578,7 +749,7 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
             "Predictions mode does not include pixel tensors. Use checkpoint mode for image grids.",
         )
     if loaded.get("wrong_examples"):
-        save_example_grid(loaded["wrong_examples"], eval_dir / "wrong_examples.png", "10 wrong ensemble predictions")
+        save_checkpoint_example_grid(loaded["wrong_examples"], eval_dir / "wrong_examples.png", "10 wrong ensemble predictions")
     else:
         save_placeholder_examples(
             eval_dir / "wrong_examples.png",
@@ -622,8 +793,11 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     member_payload = [asdict(member) for member in members]
+    has_d8b_member = any(member.name.startswith("d8b") for member in members)
     summary = {
         "mode": mode,
+        "ensemble_preset": args.ensemble_preset,
+        "has_d8b_member": has_d8b_member,
         "method": args.method,
         "weights": weights,
         "split": args.split,
@@ -640,6 +814,8 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
         yaml.safe_dump(
             {
                 "mode": mode,
+                "ensemble_preset": args.ensemble_preset,
+                "has_d8b_member": has_d8b_member,
                 "method": args.method,
                 "weights": weights,
                 "split": args.split,
@@ -653,11 +829,14 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
     )
     report_md = make_report(summary, report, focus)
     (output_dir / "d7_ensemble_report.md").write_text(report_md, encoding="utf-8")
+    if has_d8b_member:
+        (output_dir / "d7_d8b_ensemble_report.md").write_text(report_md, encoding="utf-8")
 
     print("\n=======================================================")
-    print("D7 ENSEMBLE EVALUATION")
+    print("D7/D8B ENSEMBLE EVALUATION")
     print("=======================================================")
     print(f"mode:        {mode}")
+    print(f"preset:      {args.ensemble_preset}")
     print(f"method:      {args.method}")
     print(f"samples:     {loaded['aligned_samples']}")
     print(f"accuracy:    {metrics['accuracy']:.4f}")
@@ -670,6 +849,20 @@ def run_ensemble(args: argparse.Namespace) -> dict[str, Any]:
 
 def make_report(summary: dict[str, Any], report: dict[str, Any], focus: dict[str, int]) -> str:
     metric = summary["metrics"]
+    is_d7_d8b = bool(summary.get("has_d8b_member"))
+    title = "D7 + D8B Ensemble Official Evaluation Report" if is_d7_d8b else "D7 Ensemble Official Evaluation Report"
+    decision = (
+        "This D7 + D8B official ensemble candidate should be compared against the old "
+        "D7 seed44 + long150 + window4 logit-average ensemble. If probability averaging "
+        "keeps the expected accuracy, macro F1, and weighted F1 gains, freeze this as the "
+        "next official ensemble while seed-repeat checks validate the D8B border020 single model."
+        if is_d7_d8b
+        else (
+            "This official ensemble should be compared against the single-model champions: "
+            "`seed44` for macro/research and `window4_region_transformer` for accuracy/weighted F1. "
+            "If the ensemble keeps the expected gains without class collapse, freeze it as the D7 performance champion before opening D8."
+        )
+    )
     member_lines = [
         f"- `{row['model']}`: accuracy `{row['accuracy']:.4f}`, macro F1 `{row['macro_f1']:.4f}`, weighted F1 `{row['weighted_f1']:.4f}`"
         for row in summary["member_comparison"]
@@ -682,9 +875,10 @@ def make_report(summary: dict[str, Any], report: dict[str, Any], focus: dict[str
         )
     focus_lines = [f"|{name}|{value}|" for name, value in focus.items()]
     return (
-        "# D7 Ensemble Official Evaluation Report\n\n"
+        f"# {title}\n\n"
         "## Summary\n\n"
         f"- mode: `{summary['mode']}`\n"
+        f"- ensemble preset: `{summary.get('ensemble_preset', 'custom')}`\n"
         f"- method: `{summary['method']}`\n"
         f"- split: `{summary['split']}`\n"
         f"- aligned samples: `{summary['aligned_samples']}` by `{summary['alignment_key']}`\n"
@@ -701,9 +895,7 @@ def make_report(summary: dict[str, Any], report: dict[str, Any], focus: dict[str
         "|error|count|\n|---|---|\n"
         + "\n".join(focus_lines)
         + "\n\n## Decision\n\n"
-        "This official ensemble should be compared against the single-model champions: "
-        "`seed44` for macro/research and `window4_region_transformer` for accuracy/weighted F1. "
-        "If the ensemble keeps the expected gains without class collapse, freeze it as the D7 performance champion before opening D8.\n"
+        f"{decision}\n"
     )
 
 
@@ -711,10 +903,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--members", nargs="*", type=parse_member, default=None)
     parser.add_argument("--prediction_files", nargs="*", type=parse_prediction_file, default=None)
+    parser.add_argument(
+        "--ensemble_preset",
+        choices=sorted(ENSEMBLE_PRESETS),
+        default="d7_d8b_border020_area045_probavg",
+        help="Named official ensemble preset used when --members/--prediction_files are omitted.",
+    )
     parser.add_argument("--mode", choices=["auto", "checkpoint", "predictions"], default="auto")
-    parser.add_argument("--method", choices=["logit_average", "probability_average", "weighted_logit_average"], default="logit_average")
+    parser.add_argument(
+        "--method",
+        choices=["logit_average", "probability_average", "weighted_logit_average", "weighted_probability_average"],
+        default=None,
+        help="Ensemble score-combination method. Defaults to the selected preset method.",
+    )
     parser.add_argument("--weights", default=None)
-    parser.add_argument("--output_dir", default="output/d7_ensemble_seed44_long150_window4")
+    parser.add_argument("--output_dir", default=None)
     parser.add_argument("--split", default="test")
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--device", default=None)
