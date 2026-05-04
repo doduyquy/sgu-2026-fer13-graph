@@ -17,6 +17,8 @@ from evaluation.metrics import classification_report_dict
 from evaluation.metrics import compute_metrics
 from training.optimizer import step_scheduler
 
+HARD_CLASS_NAMES = ("Angry", "Fear", "Sad", "Surprise")
+
 
 def set_seed(seed: int) -> None:
     random.seed(int(seed))
@@ -73,6 +75,29 @@ def _optimizer_lr_metrics(optimizer: torch.optim.Optimizer) -> Dict[str, float]:
     for idx, lr in enumerate(lrs):
         metrics[f"lr_group_{idx}"] = lr
     return metrics
+
+
+def _normalize_metric_mode(mode: str) -> str:
+    mode = str(mode or "max").strip().lower()
+    if mode not in {"max", "min"}:
+        raise ValueError(f"Unsupported metric mode: {mode!r}. Expected 'max' or 'min'.")
+    return mode
+
+
+def _initial_metric_value(mode: str) -> float:
+    return float("inf") if mode == "min" else -float("inf")
+
+
+def _is_improved(value: float, best_value: float, mode: str) -> bool:
+    return value < best_value if mode == "min" else value > best_value
+
+
+def _get_metric_value(metrics: Dict[str, float], name: str, fallback_name: str = "val_macro_f1") -> float:
+    if name in metrics:
+        return float(metrics[name])
+    fallback = float(metrics.get(fallback_name, 0.0))
+    print(f"[Metric] WARNING: metric {name!r} not found; using {fallback_name}={fallback:.6f}")
+    return fallback
 
 
 def _cosine_mean_similarity(vectors: torch.Tensor) -> torch.Tensor:
@@ -524,6 +549,10 @@ class D5Trainer:
         val_loader,
         epochs: int,
         monitor: str = "val_macro_f1",
+        checkpoint_monitor: Optional[str] = None,
+        checkpoint_mode: str = "max",
+        early_stopping_monitor: Optional[str] = None,
+        early_stopping_mode: Optional[str] = None,
         early_stopping_patience: int = 20,
         max_train_batches: Optional[int] = None,
         max_val_batches: Optional[int] = None,
@@ -552,15 +581,29 @@ class D5Trainer:
             full_epoch_batches = None
             total_train_batches = None
 
+        checkpoint_monitor = str(checkpoint_monitor or monitor)
+        checkpoint_mode = _normalize_metric_mode(checkpoint_mode)
+        early_stopping_monitor = str(early_stopping_monitor or checkpoint_monitor)
+        early_stopping_mode = _normalize_metric_mode(early_stopping_mode or checkpoint_mode)
+        self.best_metric_name = checkpoint_monitor
+        self.best_metric_mode = checkpoint_mode
+        if self.best_epoch < 0:
+            self.best_metric = _initial_metric_value(checkpoint_mode)
+        best_early_stopping_metric = _initial_metric_value(early_stopping_mode)
         stale_epochs = 0
         history = []
         start_epoch = int(getattr(self, "start_epoch", 1))
+        print(f"[Metric] scheduler_monitor={monitor}")
+        print(f"[Checkpoint] save_best_metric={checkpoint_monitor} mode={checkpoint_mode}")
+        print(f"[EarlyStopping] monitor={early_stopping_monitor} mode={early_stopping_mode}")
         if start_epoch > int(epochs):
             print(
                 f"[Resume] start_epoch={start_epoch} is greater than epochs={int(epochs)}; "
                 "no training epochs will run."
             )
         for epoch in range(start_epoch, int(epochs) + 1):
+            if hasattr(self.criterion, "set_epoch"):
+                self.criterion.set_epoch(epoch)
             lr_metrics_before = _optimizer_lr_metrics(self.optimizer)
             train_metrics = self.train_one_epoch(
                 train_loader,
@@ -572,9 +615,15 @@ class D5Trainer:
             val_metrics = self.validate(val_loader, max_val_batches, prefix="val")
             metrics = {"epoch": float(epoch), **train_metrics, **val_metrics}
             metrics.update(lr_metrics_before)
-            monitor_value = float(metrics.get(monitor, val_metrics.get("val_macro_f1", 0.0)))
+            monitor_value = _get_metric_value(metrics, monitor)
             metrics["scheduler_monitor_value"] = monitor_value
             metrics[f"scheduler_monitor_{monitor}"] = monitor_value
+            checkpoint_value = _get_metric_value(metrics, checkpoint_monitor)
+            early_stopping_value = _get_metric_value(metrics, early_stopping_monitor)
+            metrics["checkpoint_monitor_value"] = checkpoint_value
+            metrics[f"checkpoint_monitor_{checkpoint_monitor}"] = checkpoint_value
+            metrics["early_stopping_monitor_value"] = early_stopping_value
+            metrics[f"early_stopping_monitor_{early_stopping_monitor}"] = early_stopping_value
             lr_before_step = _optimizer_lr_metrics(self.optimizer)
             step_scheduler(self.scheduler, monitor_value)
             lr_after_step = _optimizer_lr_metrics(self.optimizer)
@@ -585,12 +634,19 @@ class D5Trainer:
                 metrics["scheduler_lr_reduced"] = float(
                     lr_after_step.get("lr_min", 0.0) < lr_before_step.get("lr_min", 0.0)
                 )
-            improved = monitor_value > self.best_metric
-            if improved:
-                self.best_metric = monitor_value
+            checkpoint_improved = _is_improved(checkpoint_value, self.best_metric, checkpoint_mode)
+            early_stopping_improved = _is_improved(
+                early_stopping_value,
+                best_early_stopping_metric,
+                early_stopping_mode,
+            )
+            if checkpoint_improved:
+                self.best_metric = checkpoint_value
                 self.best_epoch = epoch
-                stale_epochs = 0
                 self.save_checkpoint("best.pth", epoch, metrics)
+            if early_stopping_improved:
+                best_early_stopping_metric = early_stopping_value
+                stale_epochs = 0
             else:
                 stale_epochs += 1
             self.save_checkpoint("last.pth", epoch, metrics)
@@ -604,15 +660,18 @@ class D5Trainer:
                 f"val_loss={metrics.get('val_loss', 0.0):.4f} "
                 f"val_acc={metrics.get('val_accuracy', 0.0):.4f} "
                 f"val_macro_f1={metrics.get('val_macro_f1', 0.0):.4f} | "
-                f"best={self.best_metric:.4f} "
+                f"best_{checkpoint_monitor}={self.best_metric:.4f} "
+                f"early_{early_stopping_monitor}={best_early_stopping_metric:.4f} "
                 f"sec/batch={metrics.get('train_sec_per_batch', 0.0):.3f}s"
             )
             print(
                 "          val pred_count: "
                 f"{[int(metrics.get(f'val_pred_count_{i}', 0.0)) for i in range(7)]}"
             )
-            if improved:
-                print(f"          improvement: best_epoch={self.best_epoch}")
+            if checkpoint_improved:
+                print(f"          checkpoint improvement: best_epoch={self.best_epoch}")
+            if early_stopping_improved:
+                print("          early stopping monitor improved")
             else:
                 print(f"          no improvement: {stale_epochs}/{int(early_stopping_patience)}")
             if stale_epochs >= int(early_stopping_patience):
@@ -632,6 +691,8 @@ class D5Trainer:
             "metrics": metrics,
             "best_metric": float(self.best_metric),
             "best_epoch": int(self.best_epoch),
+            "best_metric_name": getattr(self, "best_metric_name", None),
+            "best_metric_mode": getattr(self, "best_metric_mode", None),
             "config": self.config,
         }
         if self.scheduler is not None and hasattr(self.scheduler, "state_dict"):
@@ -794,21 +855,32 @@ class D5Trainer:
         if not y_true:
             return
         report = classification_report_dict(y_true, y_pred)
-        selected = {
-            "fear": "Fear",
-            "sad": "Sad",
-            "neutral": "Neutral",
-            "disgust": "Disgust",
-        }
-        for short_name, label in selected.items():
+        class_f1: Dict[str, float] = {}
+        for label in EMOTION_NAMES:
             values = report.get(label, {})
             if not isinstance(values, dict):
                 continue
-            metrics[f"{prefix}_{short_name}_precision"] = float(values.get("precision", 0.0))
-            metrics[f"{prefix}_{short_name}_recall"] = float(values.get("recall", 0.0))
-            metrics[f"{prefix}_{short_name}_f1"] = float(values.get("f1-score", 0.0))
+            short_name = label.lower()
+            precision = float(values.get("precision", 0.0))
+            recall = float(values.get("recall", 0.0))
+            f1 = float(values.get("f1-score", 0.0))
+            class_f1[label] = f1
+            metrics[f"{prefix}_{short_name}_precision"] = precision
+            metrics[f"{prefix}_{short_name}_recall"] = recall
+            metrics[f"{prefix}_{short_name}_f1"] = f1
+            metrics[f"{prefix}_f1_{label}"] = f1
+
+        hard_values = [class_f1[name] for name in HARD_CLASS_NAMES if name in class_f1]
+        if hard_values:
+            hard_avg = float(sum(hard_values) / len(hard_values))
+            macro_f1 = float(metrics.get(f"{prefix}_macro_f1", 0.0))
+            fear_f1 = float(class_f1.get("Fear", 0.0))
+            metrics[f"{prefix}_hard_avg_f1"] = hard_avg
+            metrics[f"{prefix}_macro_plus_025_fear"] = macro_f1 + 0.25 * fear_f1
+            metrics[f"{prefix}_macro_plus_05_hard"] = macro_f1 + 0.5 * hard_avg
+
         label_to_idx = {name.lower(): idx for idx, name in enumerate(EMOTION_NAMES)}
-        for short_name in ("fear", "sad", "disgust"):
+        for short_name in label_to_idx:
             idx = label_to_idx.get(short_name)
             if idx is not None:
                 metrics[f"{prefix}_pred_count_{short_name}"] = float(pred_count[idx].item())

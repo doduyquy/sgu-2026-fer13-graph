@@ -47,12 +47,28 @@ def run_train(config):
             strict=bool(init_cfg.get("strict", True)),
         )
     training_cfg = config.get("training", {})
+    scheduler_cfg = config.get("scheduler", {}) or {}
+    checkpoint_cfg = config.get("checkpoint", {}) or {}
+    early_stopping_cfg = config.get("early_stopping", {}) or {}
+    scheduler_monitor = training_cfg.get("monitor", scheduler_cfg.get("monitor", "val_macro_f1"))
+    checkpoint_monitor = checkpoint_cfg.get("save_best_metric", training_cfg.get("monitor", "val_macro_f1"))
+    checkpoint_mode = checkpoint_cfg.get("save_best_mode", checkpoint_cfg.get("mode", "max"))
+    early_stopping_monitor = early_stopping_cfg.get("monitor", checkpoint_monitor)
+    early_stopping_mode = early_stopping_cfg.get("mode", checkpoint_mode)
+    early_stopping_patience = early_stopping_cfg.get(
+        "patience",
+        training_cfg.get("early_stopping_patience", 20),
+    )
     result = trainer.fit(
         train_loader=train_loader,
         val_loader=val_loader,
         epochs=int(training_cfg.get("epochs", 80)),
-        monitor=training_cfg.get("monitor", "val_macro_f1"),
-        early_stopping_patience=int(training_cfg.get("early_stopping_patience", 20)),
+        monitor=scheduler_monitor,
+        checkpoint_monitor=checkpoint_monitor,
+        checkpoint_mode=checkpoint_mode,
+        early_stopping_monitor=early_stopping_monitor,
+        early_stopping_mode=early_stopping_mode,
+        early_stopping_patience=int(early_stopping_patience),
         max_train_batches=training_cfg.get("max_train_batches"),
         max_val_batches=training_cfg.get("max_val_batches"),
     )

@@ -12,6 +12,9 @@ from models.dual_branch_graph_swin_motif import DualBranchGraphSwinMotifD7
 from models.face_aware_graph_swin_d8b import FaceAwareGraphSwinD8B
 from models.fixed_motif_classifier import FixedMotifMLPClassifier
 from models.graph_swin_prepart_d6b import GraphSwinPrePartD6BD8A
+from models.motif_discovery import MotifDiscoveryDebugModel, MotifDiscoveryModule
+from models.motif_graph_classifier import FrozenMotifGraphClassifier, MotifGraphClassifier
+from models.motif_semantic_projector import FrozenMotifSemanticProjector, MotifSemanticProjector
 from models.registry import build_model
 from models.slot_pixel_part_graph_motif import SlotPixelPartGraphMotif
 
@@ -21,6 +24,12 @@ __all__ = [
     "FaceAwareGraphSwinD8B",
     "FixedMotifMLPClassifier",
     "GraphSwinPrePartD6BD8A",
+    "MotifDiscoveryDebugModel",
+    "MotifDiscoveryModule",
+    "MotifGraphClassifier",
+    "FrozenMotifGraphClassifier",
+    "MotifSemanticProjector",
+    "FrozenMotifSemanticProjector",
     "SlotPixelPartGraphMotif",
     "build_model",
 ]

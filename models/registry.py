@@ -10,6 +10,9 @@ from models.class_pixel_motif_graph_retrieval import ClassPixelMotifGraphRetriev
 from models.dual_branch_graph_swin_motif import DualBranchGraphSwinMotifD7
 from models.face_aware_graph_swin_d8b import FaceAwareGraphSwinD8B
 from models.graph_swin_prepart_d6b import GraphSwinPrePartD6BD8A
+from models.motif_graph_classifier import MotifGraphClassifier
+from models.motif_semantic_projector import MotifSemanticProjector
+from models.motif_discovery import MotifDiscoveryDebugModel
 from models.slot_pixel_part_graph_motif import SlotPixelPartGraphMotif
 
 
@@ -29,4 +32,10 @@ def build_model(config: Dict[str, Any]) -> nn.Module:
         return GraphSwinPrePartD6BD8A.from_config(cfg)
     if name in ("face_aware_graph_swin_d8b", "d8b_face_aware_graph_swin"):
         return FaceAwareGraphSwinD8B.from_config(cfg)
+    if name in ("motif_discovery_debug", "d8m_motif_discovery_debug"):
+        return MotifDiscoveryDebugModel.from_config(cfg)
+    if name in ("motif_graph_classifier", "frozen_motif_graph_classifier"):
+        return MotifGraphClassifier.from_config(cfg)
+    if name in ("motif_semantic_projector", "frozen_motif_semantic_projector"):
+        return MotifSemanticProjector.from_config(cfg)
     raise ValueError(f"Unknown model: {name}")

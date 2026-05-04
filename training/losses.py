@@ -642,7 +642,23 @@ class D8BFaceAwareLoss(nn.Module):
         self.height = int(cfg.get("height", 48))
         self.width = int(cfg.get("width", 48))
         self.eps = float(cfg.get("eps", 1e-6))
+        self.current_epoch = 0
         self._warned_missing_gate = False
+
+        attn_cfg = dict(cfg.get("attention_regularization", {}) or {})
+        self.attn_reg_enabled = bool(attn_cfg.get("enabled", False))
+        self.attn_reg_map_name = str(attn_cfg.get("map_name", "pixel_gate"))
+        self.attn_reg_use_upper_floor = bool(attn_cfg.get("use_upper_floor", True))
+        self.attn_reg_target_upper = float(attn_cfg.get("target_upper", 0.38))
+        self.attn_reg_hard_classes = tuple(int(idx) for idx in attn_cfg.get("hard_class_indices", (0, 2, 4, 5)))
+        self.attn_reg_lambda_upper = float(attn_cfg.get("lambda_upper", 0.0))
+        self.attn_reg_region_tau = float(attn_cfg.get("region_tau", 0.05))
+        self.attn_reg_start_epoch = int(attn_cfg.get("start_epoch", 1))
+        self.attn_reg_ramp_epochs = int(attn_cfg.get("ramp_epochs", 0))
+        self.attn_reg_decay_enabled = bool(attn_cfg.get("decay_enabled", False))
+        self.attn_reg_decay_start_epoch = int(attn_cfg.get("decay_start_epoch", 10**9))
+        self.attn_reg_decay_end_epoch = int(attn_cfg.get("decay_end_epoch", self.attn_reg_decay_start_epoch))
+        self.attn_reg_min_lambda_after_decay = float(attn_cfg.get("min_lambda_after_decay", 0.0))
 
         class_weights = None
         if cfg.get("use_class_weights", True):
@@ -656,6 +672,13 @@ class D8BFaceAwareLoss(nn.Module):
             )
         self.ce = WeightedCrossEntropy(class_weights)
         self.register_buffer("border_mask", self._make_border_mask(), persistent=False)
+        upper_mask, middle_mask, lower_mask = self._make_region_masks()
+        self.register_buffer("region_upper_mask", upper_mask, persistent=False)
+        self.register_buffer("region_middle_mask", middle_mask, persistent=False)
+        self.register_buffer("region_lower_mask", lower_mask, persistent=False)
+
+    def set_epoch(self, epoch: int) -> None:
+        self.current_epoch = int(epoch)
 
     def forward(
         self,
@@ -672,27 +695,111 @@ class D8BFaceAwareLoss(nn.Module):
             loss_gate_area = (pixel_gate.mean() - self.target_area).pow(2)
             loss_gate_border = self._border_loss(pixel_gate)
             loss_gate_smooth = self._smoothness_loss(pixel_gate)
+            region_metrics = self._attention_region_metrics(pixel_gate, y.long())
         else:
+            if self.attn_reg_enabled:
+                raise KeyError("attention_regularization.enabled=true requires model_out['pixel_gate']")
             if not self._warned_missing_gate:
                 warnings.warn("D8BFaceAwareLoss did not find model_out['pixel_gate']; gate losses are zero.")
                 self._warned_missing_gate = True
             loss_gate_area = zero
             loss_gate_border = zero
             loss_gate_smooth = zero
+            region_metrics = self._zero_attention_region_metrics(zero)
+
+        current_lambda_upper = logits.new_tensor(self._lambda_upper_for_epoch(self.current_epoch))
+        loss_upper_floor = region_metrics["loss_upper_floor_raw"]
+        loss_upper_weighted = current_lambda_upper * loss_upper_floor
 
         total = (
             self.ce_weight * loss_ce
             + self.lambda_area * loss_gate_area
             + self.lambda_border * loss_gate_border
             + self.lambda_smooth * loss_gate_smooth
+            + loss_upper_weighted
         )
-        return {
+        out = {
             "loss": total,
             "total_loss": total,
             "loss_ce": loss_ce,
             "loss_gate_area": loss_gate_area,
             "loss_gate_border": loss_gate_border,
             "loss_gate_smooth": loss_gate_smooth,
+            "loss_upper_floor": loss_upper_floor,
+            "loss_upper_floor_weighted": loss_upper_weighted,
+            "current_lambda_upper": current_lambda_upper,
+        }
+        out.update(region_metrics)
+        return out
+
+    def _lambda_upper_for_epoch(self, epoch: int) -> float:
+        if not self.attn_reg_enabled or not self.attn_reg_use_upper_floor:
+            return 0.0
+        epoch = int(epoch)
+        base = max(float(self.attn_reg_lambda_upper), 0.0)
+        if epoch < self.attn_reg_start_epoch:
+            return 0.0
+        if self.attn_reg_ramp_epochs > 0:
+            ramp_pos = (epoch - self.attn_reg_start_epoch + 1) / float(self.attn_reg_ramp_epochs)
+            value = base * min(max(ramp_pos, 0.0), 1.0)
+        else:
+            value = base
+        if self.attn_reg_decay_enabled and epoch >= self.attn_reg_decay_start_epoch:
+            start = self.attn_reg_decay_start_epoch
+            end = max(self.attn_reg_decay_end_epoch, start)
+            if epoch >= end:
+                return float(self.attn_reg_min_lambda_after_decay)
+            decay_pos = (epoch - start) / max(float(end - start), 1.0)
+            value = value + (float(self.attn_reg_min_lambda_after_decay) - value) * min(max(decay_pos, 0.0), 1.0)
+        return float(value)
+
+    def _attention_region_metrics(self, pixel_gate: torch.Tensor, y: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if pixel_gate.shape[1] != self.height * self.width:
+            raise ValueError(
+                f"attention_regularization expects pixel_gate with {self.height * self.width} nodes, "
+                f"got {pixel_gate.shape[1]}"
+            )
+        gate = pixel_gate.squeeze(-1).float().clamp_min(0.0)
+        probs = gate / gate.sum(dim=1, keepdim=True).clamp_min(self.eps)
+        upper_mask = self.region_upper_mask.to(device=probs.device, dtype=probs.dtype)
+        middle_mask = self.region_middle_mask.to(device=probs.device, dtype=probs.dtype)
+        lower_mask = self.region_lower_mask.to(device=probs.device, dtype=probs.dtype)
+        upper_mass = (probs * upper_mask.view(1, -1)).sum(dim=1)
+        middle_mass = (probs * middle_mask.view(1, -1)).sum(dim=1)
+        lower_mass = (probs * lower_mask.view(1, -1)).sum(dim=1)
+
+        if self.attn_reg_hard_classes:
+            hard_class_tensor = torch.as_tensor(self.attn_reg_hard_classes, device=y.device, dtype=y.dtype)
+            hard_mask = (y.view(-1, 1) == hard_class_tensor.view(1, -1)).any(dim=1)
+        else:
+            hard_mask = torch.zeros_like(y, dtype=torch.bool)
+
+        if bool(hard_mask.any()) and self.attn_reg_use_upper_floor:
+            hard_upper = upper_mass[hard_mask]
+            loss_upper = F.relu(float(self.attn_reg_target_upper) - hard_upper).mean().to(dtype=pixel_gate.dtype)
+            hard_upper_mean = hard_upper.mean().detach().to(dtype=pixel_gate.dtype)
+        else:
+            loss_upper = pixel_gate.new_zeros(())
+            hard_upper_mean = pixel_gate.new_zeros(())
+
+        return {
+            "loss_upper_floor_raw": loss_upper,
+            "pixel_gate_upper_mass_hard_classes": hard_upper_mean,
+            "pixel_gate_hard_class_count": hard_mask.float().sum().detach().to(dtype=pixel_gate.dtype),
+            "pixel_gate_upper_mass_all": upper_mass.mean().detach().to(dtype=pixel_gate.dtype),
+            "pixel_gate_middle_mass_all": middle_mass.mean().detach().to(dtype=pixel_gate.dtype),
+            "pixel_gate_lower_mass_all": lower_mass.mean().detach().to(dtype=pixel_gate.dtype),
+        }
+
+    @staticmethod
+    def _zero_attention_region_metrics(zero: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return {
+            "loss_upper_floor_raw": zero,
+            "pixel_gate_upper_mass_hard_classes": zero,
+            "pixel_gate_hard_class_count": zero,
+            "pixel_gate_upper_mass_all": zero,
+            "pixel_gate_middle_mass_all": zero,
+            "pixel_gate_lower_mass_all": zero,
         }
 
     def _border_loss(self, pixel_gate: torch.Tensor) -> torch.Tensor:
@@ -720,6 +827,14 @@ class D8BFaceAwareLoss(nn.Module):
             mask[:, :bw] = 1.0
             mask[:, -bw:] = 1.0
         return mask.reshape(-1)
+
+    def _make_region_masks(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        tau = max(float(self.attn_reg_region_tau), 1e-8)
+        y = torch.linspace(0.0, 1.0, self.height, dtype=torch.float32).view(self.height, 1)
+        upper = torch.sigmoid((0.42 - y) / tau).expand(self.height, self.width)
+        middle = (torch.sigmoid((y - 0.30) / tau) * torch.sigmoid((0.70 - y) / tau)).expand(self.height, self.width)
+        lower = torch.sigmoid((y - 0.55) / tau).expand(self.height, self.width)
+        return upper.reshape(-1), middle.reshape(-1), lower.reshape(-1)
 
 
 def build_loss(config: Dict[str, Any]) -> nn.Module:

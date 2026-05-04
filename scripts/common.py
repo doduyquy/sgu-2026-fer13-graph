@@ -369,6 +369,8 @@ def prepare_training_objects(config: Dict[str, Any]):
     model_cfg.setdefault("connectivity", graph_cfg.connectivity)
     model = build_model(model_cfg).to(device)
     loss_cfg = dict(config.get("loss", {}))
+    if config.get("attention_regularization") is not None:
+        loss_cfg["attention_regularization"] = config.get("attention_regularization")
     loss_cfg.setdefault("height", graph_cfg.height)
     loss_cfg.setdefault("width", graph_cfg.width)
     criterion = build_loss(loss_cfg).to(device)
